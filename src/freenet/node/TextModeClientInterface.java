@@ -597,7 +597,7 @@ public class TextModeClientInterface implements Runnable {
         	
         	FreenetURI uri;
 			try {
-				uri = client.insertManifest(insertURI, bucketsByName, defaultFile);
+				uri = client.insertDefaultManifest(insertURI, bucketsByName, defaultFile);
 				uri = uri.addMetaStrings(new String[] { "" });
 	        	outsb.append("=======================================================");
                 outsb.append("URI: ").append(uri);
