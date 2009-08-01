@@ -18,11 +18,12 @@ import freenet.client.FetchException;
 import freenet.client.FetchResult;
 import freenet.client.InsertException;
 import freenet.client.async.BaseClientPutter;
+import freenet.client.async.BaseManifestPutter;
 import freenet.client.async.ClientContext;
 import freenet.client.async.ClientGetter;
 import freenet.client.async.ClientRequester;
+import freenet.client.async.DefaultManifestPutter;
 import freenet.client.async.ManifestElement;
-import freenet.client.async.SimpleManifestPutter;
 import freenet.keys.FreenetURI;
 import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
@@ -36,7 +37,7 @@ import freenet.support.io.SerializableToFieldSetBucketUtil;
 public class ClientPutDir extends ClientPutBase {
 
 	private HashMap<String, Object> manifestElements;
-	private SimpleManifestPutter putter;
+	private BaseManifestPutter putter;
 	private final String defaultName;
 	private final long totalSize;
 	private final int numberOfFiles;
@@ -45,13 +46,7 @@ public class ClientPutDir extends ClientPutBase {
 	private static volatile boolean logMINOR;
 	
 	static {
-		Logger.registerLogThresholdCallback(new LogThresholdCallback() {
-			
-			@Override
-			public void shouldUpdate() {
-				logMINOR = Logger.shouldLog(Logger.MINOR, this);
-			}
-		});
+		Logger.registerClass(ClientPutDir.class);
 	}
 	
 	public ClientPutDir(FCPConnectionHandler handler, ClientPutDirMessage message, 
@@ -150,8 +145,8 @@ public class ClientPutDir extends ClientPutBase {
 	}
 	
 	private void makePutter() {
-		SimpleManifestPutter p;
-			p = new SimpleManifestPutter(this, 
+		BaseManifestPutter p;
+			p = new DefaultManifestPutter(this, 
 					manifestElements, priorityClass, uri, defaultName, ctx, getCHKOnly,
 					lowLevelClient,
 					earlyEncode);
@@ -224,13 +219,13 @@ public class ClientPutDir extends ClientPutBase {
 			if((data != null) && (data.size() > 0))
 				size += data.size();
 		}
-		manifestElements = SimpleManifestPutter.unflatten(v);
-		SimpleManifestPutter p = null;
-			if(!finished)
-				p = new SimpleManifestPutter(this, 
-						manifestElements, priorityClass, uri, defaultName, ctx, getCHKOnly, 
-						lowLevelClient,
-						earlyEncode);
+		//manifestElements = SimpleManifestPutter.unflatten(v);
+		BaseManifestPutter p = null;
+//			if(!finished)
+//				p = new SimpleManifestPutter(this, 
+//						manifestElements, priorityClass, uri, defaultName, ctx, getCHKOnly, 
+//						lowLevelClient,
+//						earlyEncode);
 		putter = p;
 		numberOfFiles = fileCount;
 		totalSize = size;
@@ -320,7 +315,9 @@ public class ClientPutDir extends ClientPutBase {
 		SimpleFieldSet files = new SimpleFieldSet(false);
 		// Flatten the hierarchy, it can be reconstructed on restarting.
 		// Storing it directly would be a PITA.
-		ManifestElement[] elements = SimpleManifestPutter.flatten(manifestElements);
+		// Fix me
+		//ManifestElement[] elements = SimpleManifestPutter.flatten(manifestElements);
+		ManifestElement[] elements = new ManifestElement[] {};
 		fs.putSingle("DefaultName", defaultName);
 		fs.putSingle("PutDirType", wasDiskPut ? "disk" : "complex");
 		for(int i=0;i<elements.length;i++) {

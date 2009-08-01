@@ -7,7 +7,6 @@ import java.util.HashMap;
 import com.db4o.ObjectContainer;
 
 import freenet.client.async.ManifestElement;
-import freenet.client.async.SimpleManifestPutter;
 import freenet.keys.FreenetURI;
 import freenet.node.Node;
 import freenet.support.Logger;
@@ -70,7 +69,8 @@ public class PersistentPutDir extends FCPMessage {
 		//                 after composing the PutHandlers (done in BaseManifestPutter), they are 'lost':
 		//                 A resumed half done container put can not get the complete file list from BaseManifestPutter.
 		//                 Is it really necessary to include the file list here?
-		ManifestElement[] elements = SimpleManifestPutter.flatten(manifestElements);
+		//ManifestElement[] elements = SimpleManifestPutter.flatten(manifestElements);
+		ManifestElement[] elements = new ManifestElement[] {};
 		fs.putSingle("DefaultName", defaultName);
 		for(int i=0;i<elements.length;i++) {
 			String num = Integer.toString(i);
