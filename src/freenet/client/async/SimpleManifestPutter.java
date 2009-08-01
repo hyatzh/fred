@@ -36,6 +36,7 @@ import freenet.support.api.Bucket;
 import freenet.support.io.BucketTools;
 import freenet.support.io.NativeThread;
 
+@Deprecated
 public class SimpleManifestPutter extends BaseClientPutter implements PutCompletionCallback {
 
 	private static volatile boolean logMINOR;
