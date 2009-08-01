@@ -426,7 +426,10 @@ public class Metadata implements Cloneable {
 	 * @param dir A map of names (string) to either files (same string) or
 	 * directories (more HashMap's)
 	 * @throws MalformedURLException One of the URI:s were malformed
+	 * 
+	 * @deprecated use {@link SimpleManifestComposer} instead
 	 */
+	@Deprecated
 	public static Metadata mkRedirectionManifest(HashMap<String, Object> dir) throws MalformedURLException {
 		Metadata ret = new Metadata();
 		ret.addRedirectionManifest(dir);
@@ -436,8 +439,11 @@ public class Metadata implements Cloneable {
 	/**
 	 * Create a Metadata object and add manifest entries from the given map.
 	 * The map can contain either string -> Metadata, or string -> map, the latter
-	 * indicating subdirs. 
+	 * indicating subdirs.
+	 * 
+	 * @deprecated use {@link SimpleManifestComposer} instead
 	 */
+	@Deprecated
 	public static Metadata mkRedirectionManifestWithMetadata(HashMap<String, Object> dir) {
 		Metadata ret = new Metadata();
 		ret.addRedirectionManifestWithMetadata(dir);
