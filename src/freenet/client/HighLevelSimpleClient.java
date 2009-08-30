@@ -6,6 +6,7 @@ package freenet.client;
 import java.util.HashMap;
 import java.util.Set;
 
+import freenet.client.async.BaseManifestPutter;
 import freenet.client.async.ClientCallback;
 import freenet.client.async.ClientGetCallback;
 import freenet.client.async.ClientGetter;
@@ -86,8 +87,24 @@ public interface HighLevelSimpleClient {
 	
 	/**
 	 * Blocking insert of multiple files as a manifest (or zip manifest, etc).
+	 * @deprecated
 	 */
 	public FreenetURI insertManifest(FreenetURI insertURI, HashMap bucketsByName, String defaultName) throws InsertException;
+	
+	/**
+	 * Blocking insert of multiple files as a manifest (using a custom manifest putter).
+	 */
+	public FreenetURI insertManifest(PutWaiter putWaiter, BaseManifestPutter baseManifestPutter) throws InsertException;
+	
+	/**
+	 * Blocking insert of multiple files as a manifest.
+	 */
+	public FreenetURI insertPlainManifest(FreenetURI insertURI, HashMap<String, Object> bucketsByName, String defaultName) throws InsertException;
+	
+	/**
+	 * Blocking insert of multiple files as a container (using DefaultManifestPutter).
+	 */
+	public FreenetURI insertDefaultManifest(FreenetURI insertURI, HashMap<String, Object> bucketsByName, String defaultName) throws InsertException;
 	
 	/**
 	 * Get the FetchContext so you can customise the search process. Has settings for all sorts of things

@@ -9,12 +9,15 @@ import java.util.Set;
 
 import com.db4o.ObjectContainer;
 
+import freenet.client.async.BaseManifestPutter;
 import freenet.client.async.ClientCallback;
 import freenet.client.async.ClientGetCallback;
 import freenet.client.async.ClientGetter;
 import freenet.client.async.ClientPutCallback;
 import freenet.client.async.ClientPutter;
 import freenet.client.async.DatabaseDisabledException;
+import freenet.client.async.DefaultManifestPutter;
+import freenet.client.async.PlainManifestPutter;
 import freenet.client.async.SimpleManifestPutter;
 import freenet.client.events.ClientEventListener;
 import freenet.client.events.ClientEventProducer;
@@ -223,10 +226,44 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 		return insert(block, false, null, true);
 	}
 
+	@Deprecated
 	public FreenetURI insertManifest(FreenetURI insertURI, HashMap bucketsByName, String defaultName) throws InsertException {
 		PutWaiter pw = new PutWaiter();
 		SimpleManifestPutter putter =
 			new SimpleManifestPutter(pw, SimpleManifestPutter.bucketsByNameToManifestEntries(bucketsByName), priorityClass, insertURI, defaultName, getInsertContext(true), false, this, false);
+		try {
+			core.clientContext.start(putter);
+		} catch (DatabaseDisabledException e) {
+			// Impossible
+		}
+		return pw.waitForCompletion();
+	}
+	
+	public FreenetURI insertManifest(PutWaiter putWaiter, BaseManifestPutter baseManifestPutter) throws InsertException {
+		try {
+			core.clientContext.start(baseManifestPutter);
+		} catch (DatabaseDisabledException e) {
+			// Impossible
+		}
+		return putWaiter.waitForCompletion();
+	}
+	
+	public FreenetURI insertDefaultManifest(FreenetURI insertURI, HashMap<String, Object> bucketsByName, String defaultName) throws InsertException {
+		PutWaiter pw = new PutWaiter();
+		DefaultManifestPutter putter =
+			new DefaultManifestPutter(pw, bucketsByName, priorityClass, insertURI, defaultName, getInsertContext(true), false, this, false);
+		try {
+			core.clientContext.start(putter);
+		} catch (DatabaseDisabledException e) {
+			// Impossible
+		}
+		return pw.waitForCompletion();
+	}
+	
+	public FreenetURI insertPlainManifest(FreenetURI insertURI, HashMap<String, Object> bucketsByName, String defaultName) throws InsertException {
+		PutWaiter pw = new PutWaiter();
+		PlainManifestPutter putter =
+			new PlainManifestPutter(pw, bucketsByName, priorityClass, insertURI, defaultName, getInsertContext(true), false, this, false);
 		try {
 			core.clientContext.start(putter);
 		} catch (DatabaseDisabledException e) {
