@@ -81,7 +81,7 @@
 
 	<condition property="do.junit" value="true">
 		<and>
-			<isfalse value="${skip_tests}" />
+			<istrue value="${force_tests}" />
 			<isset property="junit.present" />
 		</and>
 	</condition>
