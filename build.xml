@@ -50,13 +50,13 @@
 		<arg value="--always" />
 		<arg value="--abbrev=4" />
 	</exec>
-	<condition property="git.revision" value="${git.describe}" else="@unknown@">
+
+	<condition property="git.revision" value="${git.describe} (übernode)" else="@unknown@">
 		<and>
 			<equals arg1="${git.result}" arg2="0" />
 			<isset property="git.describe" />
 		</and>
 	</condition>
-	
 
 	<target name="mkdir">
 		<mkdir dir="${build}"/>
