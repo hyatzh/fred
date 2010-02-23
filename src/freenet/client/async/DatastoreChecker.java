@@ -285,7 +285,7 @@ public class DatastoreChecker implements PrioRunnable {
 		// Add it to the list of requests running here, so that priority changes while the data is on the store checker queue will work.
 		ClientRequester requestor = getter.getClientRequest();
 		container.activate(requestor, 1);
-		requestor.addToRequests(getter, null);
+		requestor.addToRequests(getter, container);
 		synchronized(this) {
 			// FIXME only add if queue not full.
 			int queueSize = 0;
@@ -371,16 +371,18 @@ public class DatastoreChecker implements PrioRunnable {
 						sched = persistentSchedulers[prio].remove(0);
 						item = persistentCheckerItems[prio].remove(0);
 						blocks = persistentBlockSets[prio].remove(0);
+						if(logMINOR)
+							Logger.minor(this, "Checking persistent request at prio "+prio);
 						break;
 					}
 				}
 				if(keys == null) {
-					if(logMINOR) Logger.minor(this, "Waiting for more persistent requests");
 					try {
 						context.jobRunner.queue(loader, NativeThread.HIGH_PRIORITY, true);
 					} catch (DatabaseDisabledException e1) {
 						// Ignore
 					}
+					if(logMINOR) Logger.minor(this, "Waiting for more persistent requests");
 					try {
 						wait(100*1000);
 					} catch (InterruptedException e) {

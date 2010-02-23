@@ -24,6 +24,7 @@ import freenet.keys.KeyBlock;
 import freenet.keys.KeyDecodeException;
 import freenet.keys.NodeSSK;
 import freenet.keys.SSKBlock;
+import freenet.keys.SSKVerifyException;
 import freenet.keys.USK;
 import freenet.node.KeysFetchingLocally;
 import freenet.node.LowLevelGetException;
@@ -136,13 +137,18 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 	 * Callbacks are told when the USKFetcher finishes, and unless background poll is
 	 * enabled, they are only sent onFoundEdition *once*, on completion.
 	 * 
+	 * However they do help to determine the fetcher's priority.
+	 * 
 	 * FIXME: Don't allow callbacks if backgroundPoll is enabled??
 	 * @param cb
 	 * @return
 	 */
-	public synchronized boolean addCallback(USKFetcherCallback cb) {
-		if(completed) return false; 
-		callbacks.add(cb);
+	public boolean addCallback(USKFetcherCallback cb) {
+		synchronized(this) {
+			if(completed) return false; 
+			callbacks.add(cb);
+		}
+		updatePriorities();
 		return true;
 	}
 	
@@ -216,8 +222,9 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 		
 		public short getPriority() {
 			if(backgroundPoll) {
-				if(minFailures == origMinFailures && minFailures != maxMinFailures) {
-					// Either just started, or just advanced, either way boost the priority.
+				if((minFailures == origMinFailures && !firstLoop) && minFailures != maxMinFailures) {
+					// Just advanced, boost the priority.
+					// Do NOT boost the priority if just started.
 					return progressPollPriority;
 				} else {
 					return normalPollPriority;
@@ -236,6 +243,7 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 	 * we have finished (unless in background poll mode) */
 	long minFailures;
 	final long origMinFailures;
+	boolean firstLoop;
 	
 	static final int origSleepTime = 30 * 60 * 1000;
 	static final int maxSleepTime = 24 * 60 * 60 * 1000;
@@ -271,6 +279,7 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 		this.origUSK = origUSK;
 		this.uskManager = manager;
 		this.minFailures = this.origMinFailures = minFailures;
+		firstLoop = true;
 		runningAttempts = new Vector<USKAttempt>();
 		callbacks = new LinkedList<USKFetcherCallback>();
 		subscribers = new HashSet<USKCallback>();
@@ -322,6 +331,7 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 					// Only if we actually DO advance, not if we just confirm our suspicion (valueAtSchedule always starts at 0).
 					minFailures = origMinFailures;
 					sleepTime = origSleepTime;
+					firstLoop = false;
 					end = now;
 					if(logMINOR)
 						Logger.minor(this, "We have advanced: at start, "+valueAtSchedule+" at end, "+valAtEnd);
@@ -332,6 +342,7 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 						newMinFailures = maxMinFailures;
 					minFailures = newMinFailures;
 				}
+				if(logMINOR) Logger.minor(this, "Sleep time is "+sleepTime+" this sleep is "+(end-now)+" min failures is "+minFailures+" for "+this);
 			}
 			schedule(end-now, null, context);
 		} else {
@@ -366,13 +377,15 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 	}
 
 	void onSuccess(USKAttempt att, boolean dontUpdate, ClientSSKBlock block, final ClientContext context) {
+		onSuccess(att, att.number, dontUpdate, block, context);
+	}
+	
+	void onSuccess(USKAttempt att, long curLatest, boolean dontUpdate, ClientSSKBlock block, final ClientContext context) {
 		final long lastEd = uskManager.lookupLatestSlot(origUSK);
-		long curLatest;
 		boolean decode = false;
 		Vector<USKAttempt> killAttempts;
 		synchronized(this) {
-			runningAttempts.remove(att);
-			curLatest = att.number;
+			if(att != null) runningAttempts.remove(att);
 			if(completed || cancelled) return;
 			decode = curLatest >= lastEd && !(dontUpdate && block == null);
 			curLatest = Math.max(lastEd, curLatest);
@@ -391,7 +404,7 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 		}
 		finishCancelBefore(killAttempts, context);
 		Bucket data = null;
-		if(decode) {
+		if(decode && block != null) {
 			try {
 				data = block.decode(context.getBucketFactory(parent.persistent()), 1025 /* it's an SSK */, true);
 			} catch (KeyDecodeException e) {
@@ -403,6 +416,7 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 		}
 		synchronized(this) {
 			if (decode) {
+				if(block != null) {
 					lastCompressionCodec = block.getCompressionCodec();
 					lastWasMetadata = block.isMetadata();
 					if(keepLastData) {
@@ -411,6 +425,11 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 						lastRequestData = data;
 					} else
 						data.free();
+				} else {
+					lastCompressionCodec = -1;
+					lastWasMetadata = false;
+					lastRequestData = null;
+				}
 			}
 		}
 		if(!dontUpdate)
@@ -593,17 +612,31 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 		short normalPrio = RequestStarter.MINIMUM_PRIORITY_CLASS;
 		short progressPrio = RequestStarter.MINIMUM_PRIORITY_CLASS;
 		USKCallback[] localCallbacks;
+		USKFetcherCallback[] fetcherCallbacks;
 		synchronized(this) {
 			localCallbacks = subscribers.toArray(new USKCallback[subscribers.size()]);
+			// Callbacks also determine the fetcher's priority.
+			// Otherwise USKFetcherTag would have no way to tell us the priority we should run at.
+			fetcherCallbacks = callbacks.toArray(new USKFetcherCallback[callbacks.size()]);
 		}
-		if(localCallbacks.length == 0) {
+		if(localCallbacks.length == 0 && fetcherCallbacks.length == 0) {
 			normalPollPriority = DEFAULT_NORMAL_POLL_PRIORITY;
 			progressPollPriority = DEFAULT_PROGRESS_POLL_PRIORITY;
+			if(logMINOR) Logger.minor(this, "Updating priorities: normal = "+normalPollPriority+" progress = "+progressPollPriority+" for "+this+" for "+origUSK);
 			return;
 		}
 		
 		for(int i=0;i<localCallbacks.length;i++) {
 			USKCallback cb = localCallbacks[i];
+			short prio = cb.getPollingPriorityNormal();
+			if(logDEBUG) Logger.debug(this, "Normal priority for "+cb+" : "+prio);
+			if(prio < normalPrio) normalPrio = prio;
+			if(logDEBUG) Logger.debug(this, "Progress priority for "+cb+" : "+prio);
+			prio = cb.getPollingPriorityProgress();
+			if(prio < progressPrio) progressPrio = prio;
+		}
+		for(int i=0;i<fetcherCallbacks.length;i++) {
+			USKFetcherCallback cb = fetcherCallbacks[i];
 			short prio = cb.getPollingPriorityNormal();
 			if(logDEBUG) Logger.debug(this, "Normal priority for "+cb+" : "+prio);
 			if(prio < normalPrio) normalPrio = prio;
@@ -989,7 +1022,13 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 		}
 		// FIXME remove
 		assert(edition == realKey.getURI().uskForSSK().getSuggestedEdition());
-		onFoundEdition(edition, origUSK, container, context, false, (short)-1, null, false, false);
+		ClientSSKBlock data;
+		try {
+			data = ClientSSKBlock.construct((SSKBlock)found, realKey);
+		} catch (SSKVerifyException e) {
+			data = null;
+		}
+		onSuccess(null, edition, false, data, context);
 		return true;
 	}
 
