@@ -60,6 +60,8 @@ public interface ToadletContainer {
 
 	public boolean enableExtendedMethodHandling();
 
+	public boolean isWebSocketEnabled();
+
 	/** Get the BucketFactory */
 	public BucketFactory getBucketFactory();
 

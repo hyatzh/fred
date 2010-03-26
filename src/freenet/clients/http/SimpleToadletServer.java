@@ -90,7 +90,8 @@ public final class SimpleToadletServer implements ToadletContainer, Runnable {
 	private boolean enableInlinePrefetch;
 	private boolean enableActivelinks;
 	private boolean enableExtendedMethodHandling;
-	
+	private boolean isWebSocketEnabled;
+
 	// Something does not really belongs to here
 	volatile static boolean isPanicButtonToBeShown;				// move to QueueToadlet ?
 	volatile static boolean noConfirmPanic;
@@ -359,6 +360,19 @@ public final class SimpleToadletServer implements ToadletContainer, Runnable {
 						enableExtendedMethodHandling = val;
 					}
 		});
+		fproxyConfig.register("enableWebSockets", false, configItemOrder++, true, false, "SimpleToadletServer.enableWebSockets", "SimpleToadletServer.enableWebSocketsLong",
+				new BooleanCallback() {
+					@Override
+					public Boolean get() {
+						return isWebSocketEnabled;
+					}
+
+					@Override
+					public void set(Boolean val) throws InvalidConfigValueException, NodeNeedRestartException {
+						if(get().equals(val)) return;
+						isWebSocketEnabled = val;
+					}
+		});
 		fproxyConfig.register("javascriptEnabled", true, configItemOrder++, true, false, "SimpleToadletServer.enableJS", "SimpleToadletServer.enableJSLong",
 				new FProxyJavascriptEnabledCallback(this));
 		fproxyConfig.register("hasCompletedWizard", false, configItemOrder++, true, false, "SimpleToadletServer.hasCompletedWizard", "SimpleToadletServer.hasCompletedWizardLong",
@@ -392,6 +406,7 @@ public final class SimpleToadletServer implements ToadletContainer, Runnable {
 		fProxyJavascriptEnabled = fproxyConfig.getBoolean("javascriptEnabled");
 		disableProgressPage = fproxyConfig.getBoolean("disableProgressPage");
 		enableExtendedMethodHandling = fproxyConfig.getBoolean("enableExtendedMethodHandling");
+		isWebSocketEnabled = fproxyConfig.getBoolean("enableWebSockets");
 
 		fproxyConfig.register("showPanicButton", false, configItemOrder++, true, true, "SimpleToadletServer.panicButton", "SimpleToadletServer.panicButtonLong",
 				new BooleanCallback(){
@@ -854,6 +869,10 @@ public final class SimpleToadletServer implements ToadletContainer, Runnable {
 
 	public boolean enableExtendedMethodHandling() {
 		return enableExtendedMethodHandling;
+	}
+
+	public boolean isWebSocketEnabled() {
+		return isWebSocketEnabled;
 	}
 
 	public synchronized boolean allowPosts() {
