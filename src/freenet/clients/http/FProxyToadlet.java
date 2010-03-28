@@ -980,6 +980,8 @@ public final class FProxyToadlet extends Toadlet implements RequestClient {
 
 		PproxyToadlet pproxy = new PproxyToadlet(client, node, core);
 		server.register(pproxy, "FProxyToadlet.categoryConfig", "/plugins/", true, "FProxyToadlet.pluginsTitle", "FProxyToadlet.plugins", true, null);
+		WebSocketToadlet websockettoadlet = new WebSocketToadlet(client);
+		server.register(websockettoadlet, null, "/websocket/", true, false);
 		
 		SubConfig[] sc = config.getConfigs();
 		Arrays.sort(sc);
