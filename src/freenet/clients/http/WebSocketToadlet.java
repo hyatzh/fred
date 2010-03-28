@@ -17,7 +17,7 @@ import freenet.support.api.HTTPRequest;
  * A really simple websock app to test browser ability.
  * 
  */
-public class WebSocketToadlet extends Toadlet {
+public class WebSocketToadlet extends Toadlet implements WebSocketAcceptor {
 
 	public WebSocketToadlet(HighLevelSimpleClient client) {
 		super(client);
@@ -69,6 +69,24 @@ public class WebSocketToadlet extends Toadlet {
 
 	private static String l10n(String key) {
 		return NodeL10n.getBase().getString("WebSocketToadlet." + key);
+	}
+
+	public static class WebSocketEcho implements WebSocketHandler {
+
+		private final String _host;
+		private final String _origin;
+		private final String _protocol;
+
+		public WebSocketEcho(String host, String origin, String protocol) {
+			_host = host;
+			_origin = origin;
+			_protocol = protocol;
+		}
+	}
+
+	public WebSocketHandler acceptUpgrade(String host, String origin, String protocol) {
+		// accept any and do a simple echo.
+		return new WebSocketEcho(host, origin, protocol);
 	}
 
 }

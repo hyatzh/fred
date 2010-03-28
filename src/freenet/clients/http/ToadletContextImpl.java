@@ -456,7 +456,7 @@ public class ToadletContextImpl implements ToadletContext {
 					while (redirect) {
 						// don't go around the loop unless set explicitly
 						redirect = false;
-						
+
 						Toadlet t;
 						try {
 							t = container.findToadlet(uri);
@@ -464,52 +464,88 @@ public class ToadletContextImpl implements ToadletContext {
 							Toadlet.writePermanentRedirect(ctx, "Found elsewhere", e.newuri.toASCIIString());
 							break;
 						}
-					
+
 						if(t == null) {
 							ctx.sendNoToadletError(ctx.shouldDisconnect);
 							break;
 						}
 
-						// if the Toadlet does not support the method, we don't need to parse the data
-						// also due this pre check a 'NoSuchMethodException' should never appear
-						if (!(t.findSupportedMethods().contains(method))) {
-							ctx.sendMethodNotAllowed(method, ctx.shouldDisconnect);
-							break;
-						}
-
-						HTTPRequestImpl req = new HTTPRequestImpl(uri, data, ctx, method);
-						try {
-							String methodName = "handleMethod" + method;
+						// check for WebSocket Upgrade
+						if (checkForWebSocketUpgrade(t, container, headers, method)) {
+							WebSocketAcceptor wsa = (WebSocketAcceptor) t;
+							WebSocketHandler wsh = wsa.acceptUpgrade(headers.get("host"), headers.get("origin"), headers.get("websocket-protocol"));
+							if (wsh == null) {
+								// rejected by implementation
+								ctx.shouldDisconnect = true;
+								sendError(sock.getOutputStream(), 403, "Forbidden", "Websocket is forbidden for this configuration.", true, null);
+								break;
+							}
+							// accepted, send Upgrade
+							StringBuilder sb = new StringBuilder();
+							// TODO FIXME
+							// i hardcoded a worksforme(tm) version because i did not
+							// understand the spec properly. clients are supposed to
+							// disconnect if the reply is not 'perfect'.
+							sb.append("HTTP/1.1 101 Web Socket Protocol Handshake\r\n");
+							sb.append("Upgrade: WebSocket\r\n");
+							sb.append("Connection: Upgrade\r\n");
+							sb.append("WebSocket-Origin: http://127.0.0.1:8889\r\n");
+							sb.append("WebSocket-Location: ws://127.0.0.1:8889/websocket/\r\n");
+							sb.append("\r\n");
+							OutputStream os = sock.getOutputStream();
+							os.write(sb.toString().getBytes("US-ASCII"));
+							WebSocketConnection wsc = new WebSocketConnection(wsh, is, os);
 							try {
-								Class<? extends Toadlet> c = t.getClass();
-								Method m = c.getMethod(methodName, HANDLE_PARAMETERS);
-								if (methodIsConfigurable) {
-									AllowData anno = m.getAnnotation(AllowData.class);
-									if (anno == null) {
-										if (data != null) {
-											sendError(sock.getOutputStream(), 400, "Bad Request", "Content not allowed", true, null);
-											ctx.close();
-											return;
-										}
-									} else if (anno.value()) {
-										if (data == null) {
-											sendError(sock.getOutputStream(), 400, "Bad Request", "Missing Content", true, null);
-											ctx.close();
-											return;
+								wsc.service();
+							} catch (Throwable e) {
+								Logger.error(ToadletContextImpl.class, "Error while serving websocket.", e);
+							}
+							ctx.shouldDisconnect = true;
+							break;
+						} else {
+							// not a websocket, continue with ancient HTTP handling
+
+							// if the Toadlet does not support the method, we don't need to parse the data
+							// also due this pre check a 'NoSuchMethodException' should never appear
+							if (!(t.findSupportedMethods().contains(method))) {
+								ctx.sendMethodNotAllowed(method, ctx.shouldDisconnect);
+								break;
+							}
+
+							HTTPRequestImpl req = new HTTPRequestImpl(uri, data, ctx, method);
+							try {
+								String methodName = "handleMethod" + method;
+								try {
+									Class<? extends Toadlet> c = t.getClass();
+									Method m = c.getMethod(methodName, HANDLE_PARAMETERS);
+									if (methodIsConfigurable) {
+										AllowData anno = m.getAnnotation(AllowData.class);
+										if (anno == null) {
+											if (data != null) {
+												sendError(sock.getOutputStream(), 400, "Bad Request", "Content not allowed", true, null);
+												ctx.close();
+												return;
+											}
+										} else if (anno.value()) {
+											if (data == null) {
+												sendError(sock.getOutputStream(), 400, "Bad Request", "Missing Content", true, null);
+												ctx.close();
+												return;
+											}
 										}
 									}
+									ctx.setActiveToadlet(t);
+									Object arglist[] = new Object[] {uri, req, ctx};
+									m.invoke(t, arglist);
+								} catch (InvocationTargetException ite) {
+									throw ite.getCause();
 								}
-								ctx.setActiveToadlet(t);
-								Object arglist[] = new Object[] {uri, req, ctx};
-								m.invoke(t, arglist);
-							} catch (InvocationTargetException ite) {
-								throw ite.getCause();
+							} catch (RedirectException re) {
+								uri = re.newuri;
+								redirect = true;
+							} finally {
+								req.freeParts();
 							}
-						} catch (RedirectException re) {
-							uri = re.newuri;
-							redirect = true;
-						} finally {
-							req.freeParts();
 						}
 					}
 					if(ctx.shouldDisconnect) {
@@ -520,7 +556,7 @@ public class ToadletContextImpl implements ToadletContext {
 					if(data != null) data.free();
 				}
 			}
-			
+
 		} catch (ParseException e) {
 			try {
 				sendError(sock.getOutputStream(), 400, "Bad Request", l10n("parseErrorWithError", "error", e.getMessage()), true, null);
@@ -555,13 +591,42 @@ public class ToadletContextImpl implements ToadletContext {
 			}
 		}
 	}
-	
+
 	private void setActiveToadlet(Toadlet t) {
 		this.activeToadlet = t;
 	}
-	
+
 	public Toadlet activeToadlet() {
 		return activeToadlet;
+	}
+
+	private static boolean checkForWebSocketUpgrade(Toadlet t, ToadletContainer container, MultiValueTable<String, String> headers, String method) throws ParseException {
+		// TODO / discuss
+		// currently checking this is off to the WebSocketAcceptor implementation
+		// headers.get("host") this MUST be fproxy (our self)
+		// headers.get("origin") this should be fproxy (our self or configurable list)
+
+		// does not make sense without java script
+		if (!container.isFProxyJavascriptEnabled())
+			return false;
+		// do nothing if disabled
+		if (!container.isWebSocketEnabled())
+			return false;
+		// do nothing if required code is missing
+		if (!(t instanceof WebSocketAcceptor))
+			return false;
+		// is this right? only UPGRADE on GET? Or is any method valid?
+		if (!method.equals("GET"))
+			return false;
+		// check for UPGRADE header
+		if (!"WebSocket".equals(headers.get("upgrade")))
+			return false;
+		// check for UPGRADE header II
+		if (!"Upgrade".equals(headers.get("connection")))
+			// FIXME find a better fitting exception
+			throw new ParseException("Malformed Upgrade header.", 0);
+		// still here? Upgrade!
+		return true;
 	}
 
 	/**
