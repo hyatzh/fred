@@ -22,6 +22,8 @@ class WebSocketConnection implements WebSocketSender {
 
 	void service() throws IOException {
 		System.out.println("Begin crochet service: "+this);
+		wsh.onBeginService(this);
+
 		int i;
 
 		StringBuffer sb = null;
@@ -31,31 +33,31 @@ class WebSocketConnection implements WebSocketSender {
 				sb = new StringBuffer();
 				record = true;
 			} else if (i == 255) {
-				System.out.println("got a sock from client: "+sb.toString());
-				sendPacket("Hello, Client!");
 				record = false;
+				wsh.onMessage(sb.toString());
 			} else {
-				sb.append((char) i);
+				if (record)
+					sb.append((char) i);
 			}
 		}
 		System.out.println("End crochet service: "+this);
 	}
 
-	public void close() {
+	void close(boolean notify) {
 		Closer.close(in);
 		Closer.close(out);
+		if (notify)
+			wsh.onClose();
 	}
 
-	public void sendPacket(String content) throws IOException {
+	public void close() {
+		close(false);
+	}
+
+	public void sendMessage(String message) throws IOException {
 		out.write(0x00);
-		out.write(content.getBytes("UTF-8"));
+		out.write(message.getBytes("UTF-8"));
 		out.write(0xFF);
-		out.flush();
-	}
-
-	public void sendPacket(byte[] data) throws IOException {
-		//out.write(datalength);
-		//out.write(data);
 		out.flush();
 	}
 

@@ -9,6 +9,7 @@ import java.net.URI;
 import freenet.client.HighLevelSimpleClient;
 import freenet.l10n.NodeL10n;
 import freenet.support.HTMLNode;
+import freenet.support.Logger;
 import freenet.support.api.HTTPRequest;
 
 /**
@@ -51,8 +52,8 @@ public class WebSocketToadlet extends Toadlet implements WebSocketAcceptor {
 		else
 			statusbox.addChild("#", "disabled.");
 
-		HTMLNode headNode=page.headNode;
-		HTMLNode scriptNode=headNode.addChild("script","//abc");
+		HTMLNode headNode = page.headNode;
+		HTMLNode scriptNode = headNode.addChild("script","//abc");
 		scriptNode.addAttribute("type", "text/javascript");
 		scriptNode.addAttribute("src", "/static/js/websockettest.js");
 
@@ -76,12 +77,32 @@ public class WebSocketToadlet extends Toadlet implements WebSocketAcceptor {
 		private final String _host;
 		private final String _origin;
 		private final String _protocol;
+		private WebSocketSender webSocketSender;
 
 		public WebSocketEcho(String host, String origin, String protocol) {
 			_host = host;
 			_origin = origin;
 			_protocol = protocol;
 		}
+
+		public void onBeginService(WebSocketSender sender) {
+			webSocketSender = sender;
+		}
+
+		public void onMessage(String message) {
+			// a simple echo
+			try {
+				webSocketSender.sendMessage(message);
+			} catch (IOException e) {
+				Logger.error(this, "Unexpected error while WebSockets test:", e);
+			}
+			webSocketSender.close();
+		}
+
+		public void onClose() {
+			Logger.error(this, "Connection got closed unexpectly while WebSockets test.");
+		}
+
 	}
 
 	public WebSocketHandler acceptUpgrade(String host, String origin, String protocol) {

@@ -5,11 +5,9 @@ package freenet.clients.http;
 
 import java.io.IOException;
 
-public interface WebSocketSender {
+interface WebSocketSender {
 
-	public void sendPacket(String content) throws IOException;
-
-	public void sendPacket(byte[] data) throws IOException;
+	public void sendMessage(String message) throws IOException;
 
 	public void close();
 }
