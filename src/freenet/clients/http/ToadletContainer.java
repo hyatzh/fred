@@ -88,4 +88,6 @@ public interface ToadletContainer {
 	
 	public boolean fproxyHasCompletedWizard();
 
+	public boolean isSSL();
+
 }

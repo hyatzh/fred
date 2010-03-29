@@ -884,21 +884,20 @@ public final class SimpleToadletServer implements ToadletContainer, Runnable {
 	}
 	
 
-
 	public boolean enableActivelinks() {
 		return enableActivelinks;
 	}
-
-
 
 	public boolean disableProgressPage() {
 		return disableProgressPage;
 	}
 
-
-
 	public PageMaker getPageMaker() {
 		return pageMaker;
+	}
+
+	public boolean isSSL() {
+		return ssl;
 	}
 
 }
