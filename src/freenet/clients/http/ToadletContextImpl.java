@@ -473,7 +473,10 @@ public class ToadletContextImpl implements ToadletContext {
 						// check for WebSocket Upgrade
 						if (checkForWebSocketUpgrade(t, container, headers, method)) {
 							WebSocketAcceptor wsa = (WebSocketAcceptor) t;
-							WebSocketHandler wsh = wsa.acceptUpgrade(headers.get("host"), headers.get("origin"), headers.get("websocket-protocol"));
+							String host = headers.get("host");
+							String origin = headers.get("origin");
+							String protocol = headers.get("websocket-protocol");
+							WebSocketHandler wsh = wsa.acceptUpgrade(host, origin, protocol);
 							if (wsh == null) {
 								// rejected by implementation
 								ctx.shouldDisconnect = true;
@@ -482,16 +485,27 @@ public class ToadletContextImpl implements ToadletContext {
 							}
 							// accepted, send Upgrade
 							StringBuilder sb = new StringBuilder();
-							// TODO FIXME
-							// i hardcoded a worksforme(tm) version because i did not
-							// understand the spec properly. clients are supposed to
-							// disconnect if the reply is not 'perfect'.
+							// this header is 'hardcoded' because spec requires the headers to be
+							// in right order.
+							// clients are supposed to disconnect if the reply is not 'perfect'.
 							sb.append("HTTP/1.1 101 Web Socket Protocol Handshake\r\n");
 							sb.append("Upgrade: WebSocket\r\n");
 							sb.append("Connection: Upgrade\r\n");
-							sb.append("WebSocket-Origin: http://127.0.0.1:8889\r\n");
-							sb.append("WebSocket-Location: ws://127.0.0.1:8889/websocket/\r\n");
-							sb.append("\r\n");
+							sb.append("WebSocket-Location: ws");
+							if (container.isSSL())
+								sb.append('s');
+							sb.append(':');
+							sb.append('/');
+							sb.append(sock.getLocalSocketAddress().toString());
+							sb.append(uri.getPath());
+							sb.append('\r');
+							sb.append('\n');
+							if (origin != null)
+								sb.append("WebSocket-Origin: "+origin+"\r\n");
+							if (protocol != null)
+								sb.append("WebSocket-Protocol: "+protocol+"\r\n");
+							sb.append('\r');
+							sb.append('\n');
 							OutputStream os = sock.getOutputStream();
 							os.write(sb.toString().getBytes("US-ASCII"));
 							WebSocketConnection wsc = new WebSocketConnection(wsh, is, os);
