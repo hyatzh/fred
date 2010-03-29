@@ -10,7 +10,7 @@ function WebSocketTest()
 
 function RealTest() {
 	// replace the leading 'http' with 'ws'
-	var ws = new WebSocket("ws"+document.location.href.substr(4));
+	var ws = new WebSocket("ws"+document.location.href.substr(4), "websocktest");
 
 	ws.onopen = function(evt) { 
 		ws.send("Hello Server!");
