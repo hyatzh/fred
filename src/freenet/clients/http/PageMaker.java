@@ -467,7 +467,7 @@ public final class PageMaker {
 			}
 		}
 		HTMLNode contentDiv = pageDiv.addChild("div", "id", "content");
-		return new PageNode(pageNode, headNode, contentDiv);
+		return new PageNode(pageNode, headNode, contentDiv, bodyNode);
 	}
 
 	public THEME getTheme() {

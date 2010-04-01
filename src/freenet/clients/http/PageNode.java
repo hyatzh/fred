@@ -5,10 +5,12 @@ import freenet.support.HTMLNode;
 public class PageNode extends InfoboxNode {
 	
 	public final HTMLNode headNode;
+	public final HTMLNode bodyNode;
 
-	PageNode(HTMLNode page, HTMLNode head, HTMLNode content) {
+	PageNode(HTMLNode page, HTMLNode head, HTMLNode content, HTMLNode body) {
 		super(page, content);
 		this.headNode = head;
+		this.bodyNode = body;
 	}
 	
 	/**
