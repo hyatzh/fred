@@ -40,6 +40,7 @@ class WebSocketConnection implements WebSocketSender {
 					sb.append((char) i);
 			}
 		}
+		wsh.onClose();
 		System.out.println("End crochet service: "+this);
 	}
 
