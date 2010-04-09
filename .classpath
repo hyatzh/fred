@@ -3,7 +3,7 @@
 	<classpathentry excluding="freenet/node/*Test.java|plugins/JSTUN/**|test/**" kind="src" path="src"/>
 	<classpathentry including="freenet/|org/" kind="src" path="test"/>
 	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>
-	<classpathentry exported="true" kind="lib" path="lib/freenet-ext.jar" sourcepath="/Contrib/java"/>
 	<classpathentry kind="con" path="org.eclipse.jdt.junit.JUNIT_CONTAINER/3"/>
+	<classpathentry combineaccessrules="false" kind="src" path="/orbit"/>
 	<classpathentry kind="output" path="build"/>
 </classpath>

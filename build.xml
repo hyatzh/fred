@@ -21,7 +21,7 @@
 	<property name="build" location="build"/>
 	<property name="build-test" location="build-test"/>
 	<property name="lib" location="lib"/>
-	<property name="freenet-ext.location" location="${lib}/freenet-ext.jar"/>
+	<property name="freenet-ext.location" location="../orbit/lib/freenet-ext.jar"/>
 	<property name="javadoc" location="javadoc"/>
 	<property name="minExtVersion" value="-1"/>
 	<property name="recommendedExtVersion" value="-1"/>
@@ -65,18 +65,8 @@
 	</target>
 
 	<target name="env" depends="mkdir"   description="Learn about the environment">
-		<available file="${lib}/freenet-ext.jar" property="freenet-ext.present"/>
+		<!-- available file="${lib}/freenet-ext.jar" property="freenet-ext.present"/ -->
 		<!-- available file="${junit.location}" property="junit.present"/ -->
-	</target>
-
-	<target name="get-extjar" depends="env" unless="freenet-ext.present"
-		description="Download some external libraries which Freenet relies on">
-		<mkdir dir="${lib}"/>
-		<get src="http://checksums.freenetproject.org/cc/freenet-ext.jar"
-			dest="${freenet-ext.location}"
-			verbose="true"
-			usetimestamp="true"/>
-		<property name="freenet-ext.present" value="true"/>
 	</target>
 
 	<condition property="do.junit" value="true">
@@ -92,7 +82,7 @@
 	</condition>
 	<!-- ================================================== -->
 
-	<target name="compile" depends="get-extjar">
+	<target name="compile" depends="env">
 		<!-- Create the time stamp -->
 		<tstamp/>
 
