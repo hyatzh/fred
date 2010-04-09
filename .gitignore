@@ -5,10 +5,8 @@
 /javadoc
 /junitvmwatcher*
 /lib
-.classpath
 *.swp
 *.iml
 *.ipr
 *.iws
-.*
 /build.properties
