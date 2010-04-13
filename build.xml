@@ -51,7 +51,7 @@
 		<arg value="--abbrev=4" />
 	</exec>
 
-	<condition property="git.revision" value="${git.describe} (übernode)" else="@unknown@">
+	<condition property="git.revision" value="${git.describe} (übernode-osgi)" else="@unknown@">
 		<and>
 			<equals arg1="${git.result}" arg2="0" />
 			<isset property="git.describe" />
