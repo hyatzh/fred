@@ -21,7 +21,7 @@
 	<property name="build" location="build"/>
 	<property name="build-test" location="build-test"/>
 	<property name="lib" location="lib"/>
-	<property name="freenet-ext.location" location="../orbit/lib/freenet-ext.jar"/>
+	<property name="freenet-ext.location" location="../foe/orbit/lib/freenet-ext.jar"/>
 	<property name="javadoc" location="javadoc"/>
 	<property name="minExtVersion" value="-1"/>
 	<property name="recommendedExtVersion" value="-1"/>
