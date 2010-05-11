@@ -171,14 +171,18 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 	}
 
 	public FreenetURI insert(InsertBlock insert, boolean getCHKOnly, String filenameHint) throws InsertException {
-		return insert(insert, getCHKOnly, filenameHint, false);
+		return insert(insert, getCHKOnly, filenameHint, priorityClass);
+	}
+	
+	public FreenetURI insert(InsertBlock insert, boolean getCHKOnly, String filenameHint, short priority) throws InsertException {
+		return insert(insert, getCHKOnly, filenameHint, false, priority);
 	}
 
-	public FreenetURI insert(InsertBlock insert, boolean getCHKOnly, String filenameHint, boolean isMetadata) throws InsertException {
+	public FreenetURI insert(InsertBlock insert, boolean getCHKOnly, String filenameHint, boolean isMetadata, short priority) throws InsertException {
 		InsertContext context = getInsertContext(true);
 		PutWaiter pw = new PutWaiter();
 		ClientPutter put = new ClientPutter(pw, insert.getData(), insert.desiredURI, insert.clientMetadata,
-				context, priorityClass,
+				context, priority,
 				getCHKOnly, isMetadata, this, null, filenameHint, false);
 		try {
 			core.clientContext.start(put, false);
@@ -189,8 +193,12 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 	}
 
 	public ClientPutter insert(InsertBlock insert, boolean getCHKOnly, String filenameHint, boolean isMetadata, InsertContext ctx, ClientPutCallback cb) throws InsertException {
+		return insert(insert, getCHKOnly, filenameHint, isMetadata, ctx, cb, priorityClass);
+	}
+	
+	public ClientPutter insert(InsertBlock insert, boolean getCHKOnly, String filenameHint, boolean isMetadata, InsertContext ctx, ClientPutCallback cb, short priority) throws InsertException {
 		ClientPutter put = new ClientPutter(cb, insert.getData(), insert.desiredURI, insert.clientMetadata,
-				ctx, priorityClass,
+				ctx, priority,
 				getCHKOnly, isMetadata, this, null, filenameHint, false);
 		try {
 			core.clientContext.start(put, false);
@@ -214,7 +222,7 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 		}
 
 		InsertBlock block = new InsertBlock(b, null, insertURI);
-		return insert(block, false, null, true);
+		return insert(block, false, null, true, priorityClass);
 	}
 
 	public FreenetURI insertManifest(FreenetURI insertURI, HashMap<String, Object> bucketsByName, String defaultName) throws InsertException {

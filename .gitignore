@@ -5,8 +5,12 @@
 /javadoc
 /junitvmwatcher*
 /lib
+/generator/js/lib
+/generator/js/tests/lib
+/generator/js/tests/bin
 *.swp
 *.iml
 *.ipr
 *.iws
 /build.properties
+*~
