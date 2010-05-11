@@ -16,7 +16,6 @@ import junit.framework.TestCase;
 import freenet.clients.http.filter.CharsetExtractor.BOMDetection;
 import freenet.clients.http.filter.ContentFilter.FilterOutput;
 import freenet.l10n.NodeL10n;
-import freenet.support.Logger;
 import freenet.support.SimpleReadOnlyArrayBucket;
 import freenet.support.LoggerHook.InvalidThresholdException;
 import freenet.support.io.ArrayBucketFactory;

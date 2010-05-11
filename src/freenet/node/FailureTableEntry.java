@@ -4,7 +4,6 @@
 package freenet.node;
 
 import java.lang.ref.WeakReference;
-import java.util.Arrays;
 import java.util.HashSet;
 
 import freenet.keys.Key;

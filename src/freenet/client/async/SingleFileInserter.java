@@ -6,7 +6,6 @@ import java.util.HashMap;
 
 import com.db4o.ObjectContainer;
 
-import freenet.client.FetchException;
 import freenet.client.InsertBlock;
 import freenet.client.InsertContext;
 import freenet.client.InsertException;

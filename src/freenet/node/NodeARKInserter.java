@@ -8,7 +8,6 @@ import java.net.UnknownHostException;
 
 import com.db4o.ObjectContainer;
 
-import freenet.client.ClientMetadata;
 import freenet.client.InsertException;
 import freenet.client.async.BaseClientPutter;
 import freenet.client.async.ClientPutCallback;

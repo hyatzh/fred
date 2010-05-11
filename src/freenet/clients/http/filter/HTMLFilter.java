@@ -28,8 +28,6 @@ import java.util.Map;
 import java.util.StringTokenizer;
 import java.util.Stack;
 
-import java.io.FileReader;
-import java.io.FileWriter;
 import freenet.l10n.NodeL10n;
 import freenet.support.HTMLDecoder;
 import freenet.support.HTMLEncoder;

@@ -9,7 +9,6 @@ import com.db4o.ObjectContainer;
 
 import freenet.crypt.RandomSource;
 import freenet.node.BaseSendableGet;
-import freenet.node.Node;
 import freenet.support.Logger;
 
 /**

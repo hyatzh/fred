@@ -37,7 +37,6 @@ import freenet.support.SimpleFieldSet;
 import freenet.support.api.Bucket;
 import freenet.support.io.BucketTools;
 import freenet.support.io.CannotCreateFromFieldSetException;
-import freenet.support.io.NativeThread;
 import freenet.support.io.SerializableToFieldSetBucketUtil;
 
 public class SplitFileInserterSegment extends SendableInsert implements FECCallback, Encodeable {

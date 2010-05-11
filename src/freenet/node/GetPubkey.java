@@ -4,11 +4,7 @@
 package freenet.node;
 
 import java.io.IOException;
-import java.security.MessageDigest;
-import java.util.Arrays;
-
 import freenet.crypt.DSAPublicKey;
-import freenet.crypt.SHA256;
 import freenet.store.PubkeyStore;
 import freenet.store.BlockMetadata;
 import freenet.support.ByteArrayWrapper;
