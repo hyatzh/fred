@@ -15,8 +15,9 @@ import freenet.support.io.Closer;
 
 /**
  * @author Iakin
-
-*/
+ * 
+ * @deprecated use freenet.log.Logger instead
+ */
 public abstract class Logger {
 	public final static class OSThread {
 		
@@ -562,5 +563,34 @@ public abstract class Logger {
 			}
 			return (LoggerHookChain) logger;
 		}
+	}
+
+	static class HookWrapper extends LoggerHook {
+		final freenet.log.LoggerHook hook;
+		HookWrapper(freenet.log.LoggerHook h) {
+			super(h.getThreshold());
+			hook = h;
+		}
+		@Override
+		public long anyFlags() {
+			return hook.anyFlags();
+		}
+		@Override
+		public void log(Object o, Class<?> source, String message, Throwable e,
+				int priority) {
+			hook.log(o, source, message, e, priority);
+		}
+		@Override
+		public long minFlags() {
+			return hook.minFlags();
+		}
+		@Override
+		public long notFlags() {
+			return hook.notFlags();
+		}
+	}
+
+	public static void migrationHack(freenet.log.LoggerHook hook) {
+		globalAddHook(new HookWrapper(hook));
 	}
 }
