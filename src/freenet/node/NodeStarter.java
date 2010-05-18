@@ -109,13 +109,14 @@ public class NodeStarter implements WrapperListener {
 
 		PooledExecutor executor = new PooledExecutor();
 
-		try {
-			logConfigHandler = new LoggingConfigHandler(loggingConfig, executor);
-		} catch(InvalidConfigValueException e) {
-			System.err.println("Error: could not set up logging: " + e.getMessage());
-			e.printStackTrace();
-			return Integer.valueOf(-2);
-		}
+		// logger already set up in bundle activator
+//		try {
+//			logConfigHandler = new LoggingConfigHandler(loggingConfig, executor);
+//		} catch(InvalidConfigValueException e) {
+//			System.err.println("Error: could not set up logging: " + e.getMessage());
+//			e.printStackTrace();
+//			return Integer.valueOf(-2);
+//		}
 
 		executor.start();
 
