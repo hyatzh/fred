@@ -60,6 +60,7 @@ import com.sleepycat.je.EnvironmentMutableConfig;
 
 import freenet.client.FECQueue;
 import freenet.client.FetchContext;
+import freenet.client.HighLevelSimpleClient;
 import freenet.client.async.ClientRequestScheduler;
 import freenet.client.async.SplitFileInserterSegment;
 import freenet.clients.http.SecurityLevelsToadlet;
@@ -119,6 +120,7 @@ import freenet.node.useralerts.NotEnoughNiceLevelsUserAlert;
 import freenet.node.useralerts.SimpleUserAlert;
 import freenet.node.useralerts.TimeSkewDetectedUserAlert;
 import freenet.node.useralerts.UserAlert;
+import freenet.osgi.freenetservice.FreenetServiceActivator;
 import freenet.pluginmanager.ForwardPort;
 import freenet.pluginmanager.PluginManager;
 import freenet.pluginmanager.PluginStore;
@@ -2225,6 +2227,10 @@ public class Node implements TimeSkewDetectorCallback {
 		nodeStats = new NodeStats(this, sortOrder, new SubConfig("node.load", config), obwLimit, ibwLimit, nodeDir);
 
 		clientCore = new NodeClientCore(this, config, nodeConfig, nodeDir, getDarknetPortNumber(), sortOrder, oldConfig, fproxyConfig, toadlets, nodeDBHandle, db);
+
+		// dirty hack to expose HLSC as osgi service.
+		HighLevelSimpleClient hlsc = clientCore.makeClient((short) 1);
+		FreenetServiceActivator.registerService(HighLevelSimpleClient.class.getName(), hlsc, null);
 
 		if(databaseAwaitingPassword) createPasswordUserAlert();
 		if(notEnoughSpaceForAutoCrypt) createAutoCryptFailedUserAlert();
