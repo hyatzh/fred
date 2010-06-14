@@ -10,7 +10,6 @@ import org.tanukisoftware.wrapper.WrapperListener;
 import org.tanukisoftware.wrapper.WrapperManager;
 
 import freenet.config.FreenetFilePersistentConfig;
-import freenet.config.InvalidConfigValueException;
 import freenet.config.PersistentConfig;
 import freenet.config.SubConfig;
 import freenet.crypt.DiffieHellman;
