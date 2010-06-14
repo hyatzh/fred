@@ -408,6 +408,7 @@ public class DatastoreChecker implements PrioRunnable {
 //				keysToCheck[priority].remove(key);
 //			}
 		}
+		if(logMINOR) Logger.minor(this, "Checked "+keys.length+" keys");
 		if(persistent)
 			try {
 				context.jobRunner.queue(loader, NativeThread.HIGH_PRIORITY, true);

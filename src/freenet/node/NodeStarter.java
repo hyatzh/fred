@@ -265,6 +265,8 @@ public class NodeStarter implements WrapperListener {
 		WrapperManager.start(new NodeStarter(), args);
 	}
 
+	static SemiOrderedShutdownHook shutdownHook;
+	
 	/**
 	 * VM-specific init.
 	 * Not Node-specific; many nodes may be created later.

@@ -135,7 +135,6 @@ public class SplitFileInserterSegment extends SendableInsert implements FECCallb
 		dataConsecutiveRNFs = new int[origDataBlocks.length];
 		checkConsecutiveRNFs = new int[checkBlockCount];
 		blocks = new ArrayList<Integer>();
-		putter.addBlocks(dataURIs.length + checkURIs.length, container);
 		putter.addMustSucceedBlocks(dataURIs.length + checkURIs.length, container);
 		this.segNo = segNo;
 		if(persistent) container.activate(blockInsertContext, 1);
@@ -300,7 +299,7 @@ public class SplitFileInserterSegment extends SendableInsert implements FECCallb
 			Logger.normal(this, "Not encoded because no check blocks");
 			encoded = false;
 			FECCodec splitfileAlgo = FECCodec.getCodec(splitfileAlgorithm,
-					dataBlockCount);
+					dataBlockCount, ctx.compatibilityMode);
 			int checkBlocksCount =splitfileAlgo.countCheckBlocks();
 			this.checkURIs = new ClientCHK[checkBlocksCount];
 			this.checkBlocks = new Bucket[checkBlocksCount];
@@ -379,7 +378,6 @@ public class SplitFileInserterSegment extends SendableInsert implements FECCallb
 					throw new ResumeException("Missing data block " + i
 							+ " and need to reconstruct check blocks");
 		}
-		putter.addBlocks(dataURIs.length + checkURIs.length, container);
 		putter.addMustSucceedBlocks(dataURIs.length + checkURIs.length, container);
 	}
 

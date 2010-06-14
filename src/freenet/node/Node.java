@@ -275,12 +275,14 @@ public class Node implements TimeSkewDetectorCallback {
 
 
 	private static volatile boolean logMINOR;
+	private static volatile boolean logDEBUG;
 
 	static {
 		Logger.registerLogThresholdCallback(new LogThresholdCallback(){
 			@Override
 			public void shouldUpdate(){
 				logMINOR = Logger.shouldLog(Logger.MINOR, this);
+				logDEBUG = Logger.shouldLog(Logger.DEBUG, this);
 			}
 		});
 	}
@@ -911,6 +913,8 @@ public class Node implements TimeSkewDetectorCallback {
 		try {
 			fos = new FileOutputStream(backup);
 			fs.writeTo(fos);
+			fos.close();
+			fos = null;
 			FileUtil.renameTo(backup, orig);
 		} catch (IOException ioe) {
 			Logger.error(this, "IOE :"+ioe.getMessage(), ioe);
@@ -964,6 +968,7 @@ public class Node implements TimeSkewDetectorCallback {
 	 * @throws NodeInitException If the node initialization fails.
 	 */
 	 Node(PersistentConfig config, RandomSource r, RandomSource weakRandom, LoggingConfigHandler lc, NodeStarter ns, Executor executor) throws NodeInitException {
+		this.shutdownHook = SemiOrderedShutdownHook.get();
 		// Easy stuff
 		String tmp = "Initializing Node using Freenet Build #"+Version.buildNumber()+" r"+Version.cvsRevision()+" and freenet-ext Build #"+NodeStarter.extBuildNumber+" r"+NodeStarter.extRevisionNumber+" with "+System.getProperty("java.vendor")+" JVM version "+System.getProperty("java.version")+" running on "+System.getProperty("os.arch")+' '+System.getProperty("os.name")+' '+System.getProperty("os.version");
 		Logger.normal(this, tmp);
@@ -1167,10 +1172,6 @@ public class Node implements TimeSkewDetectorCallback {
 				throw new NodeInitException(NodeInitException.EXIT_CANT_WRITE_MASTER_KEYS, "Cannot read from and write to master keys file "+f);
 		}
 		masterKeysFile = f;
-
-		// init shutdown hook
-		shutdownHook = new SemiOrderedShutdownHook();
-		Runtime.getRuntime().addShutdownHook(shutdownHook);
 
 		shutdownHook.addEarlyJob(new NativeThread("Shutdown database", NativeThread.HIGH_PRIORITY, true) {
 
@@ -1988,8 +1989,15 @@ public class Node implements TimeSkewDetectorCallback {
 							e.printStackTrace();
 						}
 						//Perhaps a bit hackish...? Seems like this should be near it's definition in NodeStats.
-						nodeStats.avgStoreLocation.changeMaxReports((int)maxStoreKeys);
-						nodeStats.avgCacheLocation.changeMaxReports((int)maxCacheKeys);
+						nodeStats.avgStoreCHKLocation.changeMaxReports((int)maxStoreKeys);
+						nodeStats.avgCacheCHKLocation.changeMaxReports((int)maxCacheKeys);
+						nodeStats.avgSlashdotCacheCHKLocation.changeMaxReports((int)maxCacheKeys);
+						nodeStats.avgClientCacheCHKLocation.changeMaxReports((int)maxCacheKeys);
+
+						nodeStats.avgStoreSSKLocation.changeMaxReports((int)maxStoreKeys);
+						nodeStats.avgCacheSSKLocation.changeMaxReports((int)maxCacheKeys);
+						nodeStats.avgSlashdotCacheSSKLocation.changeMaxReports((int)maxCacheKeys);
+						nodeStats.avgClientCacheSSKLocation.changeMaxReports((int)maxCacheKeys);
 					}
 		}, true);
 
@@ -3982,10 +3990,18 @@ public class Node implements TimeSkewDetectorCallback {
 	}
 
 	public SSKBlock fetch(NodeSSK key, boolean dontPromote, boolean canReadClientCache, boolean canWriteClientCache, boolean canWriteDatastore, boolean forULPR, BlockMetadata meta) {
+		double loc=key.toNormalizedDouble();
+		double dist=Location.distance(lm.getLocation(), loc);
 		if(canReadClientCache) {
 			try {
 				SSKBlock block = sskClientcache.fetch(key, dontPromote || !canWriteClientCache, canReadClientCache, forULPR, meta);
-				if(block != null) return block;
+				if(block != null) {
+					nodeStats.avgClientCacheSSKSuccess.report(loc);
+					if (dist > nodeStats.furthestClientCacheSSKSuccess)
+					nodeStats.furthestClientCacheSSKSuccess=dist;
+					if(logDEBUG) Logger.debug(this, "Found key "+key+" in client-cache");
+					return block;
+				}
 			} catch (IOException e) {
 				Logger.error(this, "Could not read from client cache: "+e, e);
 			}
@@ -3993,15 +4009,20 @@ public class Node implements TimeSkewDetectorCallback {
 		if(forULPR || useSlashdotCache || canReadClientCache) {
 			try {
 				SSKBlock block = sskSlashdotcache.fetch(key, dontPromote, canReadClientCache, forULPR, meta);
-				if(block != null) return block;
+				if(block != null) {
+					nodeStats.avgSlashdotCacheSSKSuccess.report(loc);
+					if (dist > nodeStats.furthestSlashdotCacheSSKSuccess)
+					nodeStats.furthestSlashdotCacheSSKSuccess=dist;
+					if(logDEBUG) Logger.debug(this, "Found key "+key+" in slashdot-cache");
+					return block;
+				}
 			} catch (IOException e) {
 				Logger.error(this, "Could not read from slashdot/ULPR cache: "+e, e);
 			}
 		}
 		if(logMINOR) dumpStoreHits();
 		try {
-			double loc=key.toNormalizedDouble();
-			double dist=Location.distance(lm.getLocation(), loc);
+
 			nodeStats.avgRequestLocation.report(loc);
 			SSKBlock block = sskDatastore.fetch(key, dontPromote || !canWriteDatastore, canReadClientCache, forULPR, meta);
 			if(block == null) {
@@ -4010,9 +4031,10 @@ public class Node implements TimeSkewDetectorCallback {
 					block = store.fetch(key, dontPromote || !canWriteDatastore, canReadClientCache, forULPR, meta);
 			}
 			if(block != null) {
-				nodeStats.avgStoreSuccess.report(loc);
-				if (dist > nodeStats.furthestStoreSuccess)
-					nodeStats.furthestStoreSuccess=dist;
+			nodeStats.avgStoreSSKSuccess.report(loc);
+			if (dist > nodeStats.furthestStoreSSKSuccess)
+				nodeStats.furthestStoreSSKSuccess=dist;
+				if(logDEBUG) Logger.debug(this, "Found key "+key+" in store");
 				return block;
 			}
 			block=sskDatacache.fetch(key, dontPromote || !canWriteDatastore, canReadClientCache, forULPR, meta);
@@ -4022,10 +4044,11 @@ public class Node implements TimeSkewDetectorCallback {
 					block = store.fetch(key, dontPromote || !canWriteDatastore, canReadClientCache, forULPR, meta);
 			}
 			if (block != null) {
-				nodeStats.avgCacheSuccess.report(loc);
-				if (dist > nodeStats.furthestCacheSuccess)
-					nodeStats.furthestCacheSuccess=dist;
+			nodeStats.avgCacheSSKSuccess.report(loc);
+			if (dist > nodeStats.furthestCacheSSKSuccess)
+				nodeStats.furthestCacheSSKSuccess=dist;
 			}
+			if(logDEBUG) Logger.debug(this, "Found key "+key+" in cache");
 			return block;
 		} catch (IOException e) {
 			Logger.error(this, "Cannot fetch data: "+e, e);
@@ -4034,10 +4057,17 @@ public class Node implements TimeSkewDetectorCallback {
 	}
 
 	public CHKBlock fetch(NodeCHK key, boolean dontPromote, boolean canReadClientCache, boolean canWriteClientCache, boolean canWriteDatastore, boolean forULPR, BlockMetadata meta) {
+		double loc=key.toNormalizedDouble();
+		double dist=Location.distance(lm.getLocation(), loc);
 		if(canReadClientCache) {
 			try {
 				CHKBlock block = chkClientcache.fetch(key, dontPromote || !canWriteClientCache, meta);
-				if(block != null) return block;
+				if(block != null) {
+					nodeStats.avgClientCacheCHKSuccess.report(loc);
+					if (dist > nodeStats.furthestClientCacheCHKSuccess)
+					nodeStats.furthestClientCacheCHKSuccess=dist;
+					return block;
+				}
 			} catch (IOException e) {
 				Logger.error(this, "Could not read from client cache: "+e, e);
 			}
@@ -4045,15 +4075,18 @@ public class Node implements TimeSkewDetectorCallback {
 		if(forULPR || useSlashdotCache || canReadClientCache) {
 			try {
 				CHKBlock block = chkSlashdotcache.fetch(key, dontPromote, meta);
-				if(block != null) return block;
+				if(block != null) {
+					nodeStats.avgSlashdotCacheCHKSucess.report(loc);
+					if (dist > nodeStats.furthestSlashdotCacheCHKSuccess)
+					nodeStats.furthestSlashdotCacheCHKSuccess=dist;
+					return block;
+				}
 			} catch (IOException e) {
 				Logger.error(this, "Could not read from slashdot/ULPR cache: "+e, e);
 			}
 		}
 		if(logMINOR) dumpStoreHits();
 		try {
-			double loc=key.toNormalizedDouble();
-			double dist=Location.distance(lm.getLocation(), loc);
 			nodeStats.avgRequestLocation.report(loc);
 			CHKBlock block = chkDatastore.fetch(key, dontPromote || !canWriteDatastore, meta);
 			if(block == null) {
@@ -4062,9 +4095,9 @@ public class Node implements TimeSkewDetectorCallback {
 					block = store.fetch(key, dontPromote || !canWriteDatastore, meta);
 			}
 			if (block != null) {
-				nodeStats.avgStoreSuccess.report(loc);
-				if (dist > nodeStats.furthestStoreSuccess)
-					nodeStats.furthestStoreSuccess=dist;
+				nodeStats.avgStoreCHKSuccess.report(loc);
+				if (dist > nodeStats.furthestStoreCHKSuccess)
+					nodeStats.furthestStoreCHKSuccess=dist;
 				return block;
 			}
 			block=chkDatacache.fetch(key, dontPromote || !canWriteDatastore, meta);
@@ -4074,9 +4107,9 @@ public class Node implements TimeSkewDetectorCallback {
 					block = store.fetch(key, dontPromote || !canWriteDatastore, meta);
 			}
 			if (block != null) {
-				nodeStats.avgCacheSuccess.report(loc);
-				if (dist > nodeStats.furthestCacheSuccess)
-					nodeStats.furthestCacheSuccess=dist;
+				nodeStats.avgCacheCHKSuccess.report(loc);
+				if (dist > nodeStats.furthestCacheCHKSuccess)
+					nodeStats.furthestCacheCHKSuccess=dist;
 			}
 			return block;
 		} catch (IOException e) {
@@ -4109,13 +4142,13 @@ public class Node implements TimeSkewDetectorCallback {
 
 		map.put(new DataStoreInstanceType(CHK, STORE), new StoreCallbackStats(chkDatastore, nodeStats.chkStoreStats()));
 		map.put(new DataStoreInstanceType(CHK, CACHE), new StoreCallbackStats(chkDatacache, nodeStats.chkCacheStats()));
-		map.put(new DataStoreInstanceType(CHK, SLASHDOT), new StoreCallbackStats(chkSlashdotcache, new NotAvailNodeStoreStats()));
-		map.put(new DataStoreInstanceType(CHK, CLIENT), new StoreCallbackStats(chkClientcache, new NotAvailNodeStoreStats()));
+		map.put(new DataStoreInstanceType(CHK, SLASHDOT), new StoreCallbackStats(chkSlashdotcache,nodeStats.chkSlashDotCacheStats()));
+		map.put(new DataStoreInstanceType(CHK, CLIENT), new StoreCallbackStats(chkClientcache, nodeStats.chkClientCacheStats()));
 
-		map.put(new DataStoreInstanceType(SSK, STORE), new StoreCallbackStats(sskDatastore, new NotAvailNodeStoreStats()));
-		map.put(new DataStoreInstanceType(SSK, CACHE), new StoreCallbackStats(sskDatacache, new NotAvailNodeStoreStats()));
-		map.put(new DataStoreInstanceType(SSK, SLASHDOT), new StoreCallbackStats(sskSlashdotcache, new NotAvailNodeStoreStats()));
-		map.put(new DataStoreInstanceType(SSK, CLIENT), new StoreCallbackStats(sskClientcache, new NotAvailNodeStoreStats()));
+		map.put(new DataStoreInstanceType(SSK, STORE), new StoreCallbackStats(sskDatastore, nodeStats.sskStoreStats()));
+		map.put(new DataStoreInstanceType(SSK, CACHE), new StoreCallbackStats(sskDatacache, nodeStats.sskCacheStats()));
+		map.put(new DataStoreInstanceType(SSK, SLASHDOT), new StoreCallbackStats(sskSlashdotcache, nodeStats.sskSlashDotCacheStats()));
+		map.put(new DataStoreInstanceType(SSK, CLIENT), new StoreCallbackStats(sskClientcache, nodeStats.sskClientCacheStats()));
 
 		map.put(new DataStoreInstanceType(PUB_KEY, STORE), new StoreCallbackStats(pubKeyDatastore, new NotAvailNodeStoreStats()));
 		map.put(new DataStoreInstanceType(PUB_KEY, CACHE), new StoreCallbackStats(pubKeyDatacache, new NotAvailNodeStoreStats()));
@@ -4165,21 +4198,26 @@ public class Node implements TimeSkewDetectorCallback {
 
 	private void store(CHKBlock block, boolean deep, boolean canWriteClientCache, boolean canWriteDatastore, boolean forULPR) {
 		try {
-			if(canWriteClientCache) {
+			double loc = block.getKey().toNormalizedDouble();
+			if (canWriteClientCache) {
 				chkClientcache.put(block, false);
+				nodeStats.avgClientCacheCHKLocation.report(loc);
 			}
-			if((forULPR || useSlashdotCache) && !(canWriteDatastore || writeLocalToDatastore))
+
+			if ((forULPR || useSlashdotCache) && !(canWriteDatastore || writeLocalToDatastore))
 				chkSlashdotcache.put(block, false);
-			if(canWriteDatastore || writeLocalToDatastore) {
-				double loc=block.getKey().toNormalizedDouble();
-				if(deep) {
+				nodeStats.avgSlashdotCacheCHKLocation.report(loc);
+			if (canWriteDatastore || writeLocalToDatastore) {
+
+				if (deep) {
 					chkDatastore.put(block, !canWriteDatastore);
-					nodeStats.avgStoreLocation.report(loc);
+					nodeStats.avgStoreCHKLocation.report(loc);
+
 				}
 				chkDatacache.put(block, !canWriteDatastore);
-				nodeStats.avgCacheLocation.report(loc);
+				nodeStats.avgCacheCHKLocation.report(loc);
 			}
-			if(canWriteDatastore || forULPR || useSlashdotCache)
+			if (canWriteDatastore || forULPR || useSlashdotCache)
 				failureTable.onFound(block);
 		} catch (IOException e) {
 			Logger.error(this, "Cannot store data: "+e, e);
@@ -4196,7 +4234,7 @@ public class Node implements TimeSkewDetectorCallback {
 
 	/** Store the block if this is a sink. Call for inserts. */
 	public void storeInsert(SSKBlock block, boolean deep, boolean overwrite, boolean canWriteClientCache, boolean canWriteDatastore) throws KeyCollisionException {
-		store(block, deep, true, canWriteClientCache, canWriteDatastore);
+		store(block, deep, canWriteClientCache, canWriteDatastore, false);
 	}
 
 	/** Store only to the cache, and not the store. Called by requests,
@@ -4209,17 +4247,22 @@ public class Node implements TimeSkewDetectorCallback {
 		try {
 			// Store the pubkey before storing the data, otherwise we can get a race condition and
 			// end up deleting the SSK data.
+			double loc = block.getKey().toNormalizedDouble();
 			getPubKey.cacheKey((block.getKey()).getPubKeyHash(), (block.getKey()).getPubKey(), deep, canWriteClientCache, canWriteDatastore, forULPR || useSlashdotCache, writeLocalToDatastore);
 			if(canWriteClientCache) {
 				sskClientcache.put(block, overwrite, false);
+				nodeStats.avgClientCacheSSKLocation.report(loc);
 			}
 			if((forULPR || useSlashdotCache) && !(canWriteDatastore || writeLocalToDatastore))
 				sskSlashdotcache.put(block, overwrite, false);
+				nodeStats.avgSlashdotCacheSSKLocation.report(loc);
 			if(canWriteDatastore || writeLocalToDatastore) {
 				if(deep) {
 					sskDatastore.put(block, overwrite, !canWriteDatastore);
+					nodeStats.avgStoreSSKLocation.report(loc);
 				}
 				sskDatacache.put(block, overwrite, !canWriteDatastore);
+				nodeStats.avgCacheSSKLocation.report(loc);
 			}
 			if(canWriteDatastore || forULPR || useSlashdotCache)
 				failureTable.onFound(block);

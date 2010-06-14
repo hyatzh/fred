@@ -213,6 +213,36 @@ public class FreenetURI implements Cloneable {
 		this.suggestedEdition = uri.suggestedEdition;
 		if(logMINOR) Logger.minor(this, "Copied: "+toString()+" from "+uri.toString(), new Exception("debug"));
 	}
+	
+	boolean noCacheURI = false;
+	
+	/** Optimise for memory. */
+	public FreenetURI intern() {
+		boolean changedAnything = false;
+		byte[] x = extra;
+		if(keyType.equals("CHK"))
+			x = ClientCHK.internExtra(x);
+		else
+			x = ClientSSK.internExtra(x);
+		if(x != extra) changedAnything = true;
+		String[] newMetaStr = null;
+		if(metaStr != null) {
+			newMetaStr = new String[metaStr.length];
+			for(int i=0;i<metaStr.length;i++) {
+				newMetaStr[i] = metaStr[i].intern();
+				if(metaStr[i] != newMetaStr[i]) changedAnything = true;
+			}
+		}
+		String dn = docName == null ? null : docName.intern();
+		if(dn != docName) changedAnything = true;
+		if(!changedAnything) {
+			noCacheURI = true;
+			return this;
+		}
+		FreenetURI u = new FreenetURI(keyType, dn, newMetaStr, routingKey, cryptoKey, extra);
+		u.noCacheURI = true;
+		return u;
+	}
 
 	public FreenetURI(String keyType, String docName) {
 		this(keyType, docName, (String[]) null, null, null, null);

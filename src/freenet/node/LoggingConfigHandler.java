@@ -55,6 +55,7 @@ public class LoggingConfigHandler {
 	private String logRotateInterval;
 	private long maxCachedLogBytes;
 	private int maxCachedLogLines;
+	private long maxBacklogNotBusy;
 	private final Executor executor;
 	
 	public LoggingConfigHandler(SubConfig loggingConfig, Executor executor) throws InvalidConfigValueException {
@@ -219,16 +220,37 @@ public class LoggingConfigHandler {
 						return maxCachedLogLines;
 					}
 					@Override
-					public void set(Integer val) throws InvalidConfigValueException {
+					public void set(Integer val) throws InvalidConfigValueException, NodeNeedRestartException {
 						if(val < 0) val = 0;
 						if(val == maxCachedLogLines) return;
 						maxCachedLogLines = val;
-						if(fileLoggerHook != null) fileLoggerHook.setMaxListLength(val);
+						throw new NodeNeedRestartException("logger.maxCachedLogLines");
 					}
 				}, false);
     	
 		maxCachedLogLines = config.getInt("maxCachedLines");
+		
+		config.register("maxBacklogNotBusy", "60000", 8, true, false, "LogConfigHandler.maxBacklogNotBusy", 
+				"LogConfigHandler.maxBacklogNotBusy", 
+				new LongCallback() {
+
+					@Override
+					public Long get() {
+						return maxBacklogNotBusy;
+					}
+
+					@Override
+					public void set(Long val) throws InvalidConfigValueException, NodeNeedRestartException {
+						if(val < 0) throw new InvalidConfigValueException("Must be >= 0");
+						if(val == maxBacklogNotBusy) return;
+						maxBacklogNotBusy = val;
+						if(fileLoggerHook != null) fileLoggerHook.setMaxBacklogNotBusy(val);
+					}
+			
+		}, false);
     	
+		maxBacklogNotBusy = config.getLong("maxBacklogNotBusy");
+		
 		if (loggingEnabled) enableLogger();
 		config.finishedInitialization();
 	}
@@ -264,7 +286,7 @@ public class LoggingConfigHandler {
 				hook = 
 					new FileLoggerHook(true, new File(logDir, LOG_PREFIX).getAbsolutePath(), 
 				    		"d (c, t, p): m", "MMM dd, yyyy HH:mm:ss:SSS", Logger.DEBUG /* filtered by chain */, false, true, 
-				    		maxZippedLogsSize /* 1GB of old compressed logfiles */);
+				    		maxZippedLogsSize /* 1GB of old compressed logfiles */, maxCachedLogLines);
 			} catch (IOException e) {
 				System.err.println("CANNOT START LOGGER: "+e.getMessage());
 				return;
@@ -280,7 +302,7 @@ public class LoggingConfigHandler {
 				}
 			}
 			hook.setMaxListBytes(maxCachedLogBytes);
-			hook.setMaxListLength(maxCachedLogLines);
+			hook.setMaxBacklogNotBusy(maxBacklogNotBusy);
 			fileLoggerHook = hook;
 			Logger.globalAddHook(hook);
 			hook.start();

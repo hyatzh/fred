@@ -175,6 +175,10 @@ public interface Compressor {
 			return this == GZIP || this == BZIP2 || this == LZMA;
 		}
 
+		public static int countCompressors() {
+			return Compressor.COMPRESSOR_TYPE.values().length;
+		}
+
 	}
 
 	/**

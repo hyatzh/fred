@@ -107,10 +107,13 @@ public class PluginInfoWrapper implements Comparable<PluginInfoWrapper> {
 	public void startShutdownPlugin(PluginManager manager, boolean reloading) {
 		unregister(manager, reloading);
 		// TODO add a timeout for plug.terminate() too
+		System.out.println("Terminating plugin "+this.getFilename());
 		try {
 			plug.terminate();
 		} catch (Throwable t) {
 			Logger.error(this, "Error while terminating plugin.", t);
+			System.err.println("Error while terminating plugin: "+t);
+			t.printStackTrace();
 		}
 		synchronized(this) {
 			stopping = true;
