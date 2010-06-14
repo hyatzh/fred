@@ -6,13 +6,16 @@ package freenet.client;
 import java.util.HashMap;
 import java.util.Set;
 
+import freenet.client.async.BaseManifestPutter;
 import freenet.client.async.ClientGetCallback;
 import freenet.client.async.ClientGetter;
 import freenet.client.async.ClientPutCallback;
 import freenet.client.async.ClientPutter;
+import freenet.client.async.DatabaseDisabledException;
 import freenet.client.events.ClientEventListener;
 import freenet.keys.FreenetURI;
 import freenet.node.RequestClient;
+import freenet.support.io.TempBucketFactory;
 
 public interface HighLevelSimpleClient {
 
@@ -158,4 +161,11 @@ public interface HighLevelSimpleClient {
 
 	public HighLevelSimpleClient clone();
 
+	public void startPutter(BaseManifestPutter bmp) throws InsertException, DatabaseDisabledException;
+
+	public void startPutter(ClientPutter putter) throws InsertException, DatabaseDisabledException;
+
+	public void startGetter(ClientGetter getter) throws FetchException, DatabaseDisabledException;
+
+	public TempBucketFactory getTempBucketFactory();
 }

@@ -9,6 +9,7 @@ import java.util.Set;
 
 import com.db4o.ObjectContainer;
 
+import freenet.client.async.BaseManifestPutter;
 import freenet.client.async.ClientGetCallback;
 import freenet.client.async.ClientGetter;
 import freenet.client.async.ClientPutCallback;
@@ -34,6 +35,7 @@ import freenet.support.compress.Compressor;
 import freenet.support.io.BucketTools;
 import freenet.support.io.NullBucket;
 import freenet.support.io.PersistentFileTracker;
+import freenet.support.io.TempBucketFactory;
 
 public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, RequestClient {
 
@@ -305,6 +307,22 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 
 	public void removeFrom(ObjectContainer container) {
 		throw new UnsupportedOperationException();
+	}
+
+	public void startPutter(BaseManifestPutter bmp) throws InsertException, DatabaseDisabledException {
+		core.clientContext.start(bmp);
+	}
+
+	public void startPutter(ClientPutter putter) throws InsertException, DatabaseDisabledException {
+		core.clientContext.start(putter, false);
+	}
+
+	public void startGetter(ClientGetter getter) throws FetchException, DatabaseDisabledException {
+		core.clientContext.start(getter);
+	}
+
+	public TempBucketFactory getTempBucketFactory() {
+		return (TempBucketFactory) bucketFactory;
 	}
 
 }
