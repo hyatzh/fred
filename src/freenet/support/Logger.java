@@ -15,8 +15,6 @@ import freenet.support.io.Closer;
 
 /**
  * @author Iakin
- * 
- * @deprecated use freenet.log.Logger instead
  */
 public abstract class Logger {
 	public final static class OSThread {
