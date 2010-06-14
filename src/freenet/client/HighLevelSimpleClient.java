@@ -54,6 +54,17 @@ public interface HighLevelSimpleClient {
 	 * @param fctx Fetch context so you can customise the search process.
 	 * @return The ClientGetter object, which will have been started already.
 	 */
+	public ClientGetter fetch(FreenetURI uri, RequestClient context, ClientGetCallback callback, FetchContext fctx, short prio) throws FetchException;
+
+	/**
+	 * Non-blocking fetch of a URI with a configurable max-size (in bytes), context object, callback and context.
+	 * Will return immediately, the callback will be called later.
+	 * @param callback Will be called when the request completes, fails, etc. If the request is persistent
+	 * this will be called on the database thread with a container parameter.
+	 * @param fctx Fetch context so you can customise the search process.
+	 * @param maxSize IGNORED. FIXME DEPRECATE
+	 * @return The ClientGetter object, which will have been started already.
+	 */
 	public ClientGetter fetch(FreenetURI uri, long maxSize, RequestClient context, ClientGetCallback callback, FetchContext fctx) throws FetchException;
 
 	/**
@@ -75,6 +86,20 @@ public interface HighLevelSimpleClient {
 	public FreenetURI insert(InsertBlock insert, boolean getCHKOnly, String filenameHint) throws InsertException;
 
 	/**
+	 * Blocking insert.
+	 * @param filenameHint If set, insert a single-file manifest containing only this file, under the given filename.
+	 * @throws InsertException If there is an error inserting the data
+	 */
+	public FreenetURI insert(InsertBlock insert, boolean getCHKOnly, String filenameHint, short priority) throws InsertException;
+
+	/**
+	 * Blocking insert.
+	 * @param filenameHint If set, insert a single-file manifest containing only this file, under the given filename.
+	 * @throws InsertException If there is an error inserting the data
+	 */
+	public FreenetURI insert(InsertBlock insert, boolean getCHKOnly, String filenameHint, short priority, InsertContext ctx) throws InsertException;
+
+	/**
 	 * Non-blocking insert.
 	 * @param isMetadata If true, insert metadata.
 	 * @param cb Will be called when the insert completes. If the request is persistent
@@ -82,6 +107,15 @@ public interface HighLevelSimpleClient {
 	 * @param ctx Insert context so you can customise the insertion process.
 	 */
 	public ClientPutter insert(InsertBlock insert, boolean getCHKOnly, String filenameHint, boolean isMetadata, InsertContext ctx, ClientPutCallback cb) throws InsertException;
+
+	/**
+	 * Non-blocking insert.
+	 * @param isMetadata If true, insert metadata.
+	 * @param cb Will be called when the insert completes. If the request is persistent
+	 * this will be called on the database thread with a container parameter.
+	 * @param ctx Insert context so you can customise the insertion process.
+	 */
+	public ClientPutter insert(InsertBlock insert, boolean getCHKOnly, String filenameHint, boolean isMetadata, InsertContext ctx, ClientPutCallback cb, short priority) throws InsertException;
 
 	/**
 	 * Blocking insert of a redirect.

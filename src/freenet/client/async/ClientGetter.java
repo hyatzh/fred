@@ -6,12 +6,17 @@ package freenet.client.async;
 import java.io.BufferedOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.MalformedURLException;
+import java.net.URISyntaxException;
 import java.util.HashSet;
 
 import com.db4o.ObjectContainer;
 
 import freenet.client.ArchiveContext;
+import freenet.client.ClientMetadata;
+import freenet.client.DefaultMIMETypes;
 import freenet.client.FetchContext;
 import freenet.client.FetchException;
 import freenet.client.FetchResult;
@@ -19,6 +24,12 @@ import freenet.client.events.ExpectedFileSizeEvent;
 import freenet.client.events.ExpectedMIMEEvent;
 import freenet.client.events.SendingToNetworkEvent;
 import freenet.client.events.SplitfileProgressEvent;
+import freenet.client.filter.ContentFilter;
+import freenet.client.filter.KnownUnsafeContentTypeException;
+import freenet.client.filter.MIMEType;
+import freenet.client.filter.UnknownContentTypeException;
+import freenet.client.filter.UnsafeContentTypeException;
+import freenet.client.filter.ContentFilter.FilterStatus;
 import freenet.keys.ClientKeyBlock;
 import freenet.keys.FreenetURI;
 import freenet.keys.Key;
@@ -27,6 +38,7 @@ import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
 import freenet.support.api.Bucket;
 import freenet.support.io.BucketTools;
+import freenet.support.io.Closer;
 
 /**
  * A high level data request. Follows redirects, downloads splitfiles, etc. Similar to what you get from FCP,
@@ -121,8 +133,11 @@ public class ClientGetter extends BaseClientGetter {
 	 * @throws FetchException If we were unable to restart.
 	 */
 	public boolean start(boolean restart, FreenetURI overrideURI, ObjectContainer container, ClientContext context) throws FetchException {
-		if(persistent())
+		if(persistent()) {
 			container.activate(uri, 5);
+			container.activate(ctx, 1);
+		}
+		boolean filtering = ctx.filterData;
 		if(logMINOR)
 			Logger.minor(this, "Starting "+this+" persistent="+persistent());
 		try {
@@ -139,7 +154,7 @@ public class ClientGetter extends BaseClientGetter {
 				}
 				currentState = SingleFileFetcher.create(this, this,
 						uri, ctx, actx, ctx.maxNonSplitfileRetries, 0, false, -1, true,
-						returnBucket, true, container, context);
+						filtering ? null : returnBucket, true, container, context);
 			}
 			if(cancelled) cancel();
 			// schedule() may deactivate stuff, so store it now.
@@ -194,6 +209,52 @@ public class ClientGetter extends BaseClientGetter {
 		// set is the returnBucket and the result. Not locking not only prevents
 		// nested locking resulting in deadlocks, it also prevents long locks due to
 		// doing massive encrypted I/Os while holding a lock.
+		
+		//Filter the data, if we are supposed to
+		if(ctx.filterData){
+			if(logMINOR) Logger.minor(this, "Running content filter... Prefetch hook: "+ctx.prefetchHook+" tagReplacer: "+ctx.tagReplacer);
+			InputStream input = null;
+			OutputStream output = null;
+			try {
+				String mimeType = ctx.overrideMIME != null ? ctx.overrideMIME: expectedMIME;
+				if(mimeType.compareTo("application/xhtml+xml") == 0) mimeType = "text/html";
+				assert(result.asBucket() != returnBucket);
+				Bucket filteredResult;
+				if(returnBucket == null) filteredResult = context.getBucketFactory(persistent()).makeBucket(-1);
+				else {
+					if(persistent()) container.activate(returnBucket, 5);
+					filteredResult = returnBucket;
+				}
+				input = result.asBucket().getInputStream();
+				output = filteredResult.getOutputStream();
+				FilterStatus filterStatus = ContentFilter.filter(input, output, mimeType, uri.toURI("/"), ctx.prefetchHook, ctx.tagReplacer, ctx.charset);
+				input.close();
+				output.close();
+				String detectedMIMEType = filterStatus.mimeType.concat(filterStatus.charset == null ? "" : "; charset="+filterStatus.charset);
+				result.asBucket().free();
+				result = new FetchResult(new ClientMetadata(detectedMIMEType), filteredResult);
+			} catch (UnsafeContentTypeException e) {
+				Logger.error(this, "Error filtering content: will not validate", e);
+				onFailure(new FetchException(e.getFetchErrorCode(), expectedSize, e.getMessage(), e, ctx.overrideMIME != null ? ctx.overrideMIME : expectedMIME), state/*Not really the state's fault*/, container, context);
+				return;
+			} catch (URISyntaxException e) {
+				// Impossible
+				Logger.error(this, "URISyntaxException converting a FreenetURI to a URI!: "+e, e);
+				onFailure(new FetchException(FetchException.INTERNAL_ERROR, e), state/*Not really the state's fault*/, container, context);
+				return;
+			} catch (IOException e) {
+				Logger.error(this, "Error filtering content", e);
+				onFailure(new FetchException(FetchException.BUCKET_ERROR, e), state/*Not really the state's fault*/, container, context);
+				return;
+			} finally {
+				Closer.close(input);
+				Closer.close(output);
+			}
+		}
+		else {
+			if(logMINOR) Logger.minor(this, "Ignoring content filter.");
+		}
+		if(returnBucket == null) if(logMINOR) Logger.minor(this, "Returnbucket is null");
 		if((returnBucket != null) && (result.asBucket() != returnBucket)) {
 			Bucket from = result.asBucket();
 			Bucket to = returnBucket;
@@ -223,8 +284,7 @@ public class ClientGetter extends BaseClientGetter {
 			state.removeFrom(container, context);
 			container.activate(clientCallback, 1);
 		}
-		FetchResult res = result;
-		clientCallback.onSuccess(res, ClientGetter.this, container);
+		clientCallback.onSuccess(result, ClientGetter.this, container);
 	}
 
 	/**
@@ -507,13 +567,31 @@ public class ClientGetter extends BaseClientGetter {
 		return binaryBlobBucket != null;
 	}
 
-	/** Called when we know the MIME type of the final data */
-	public void onExpectedMIME(String mime, ObjectContainer container, ClientContext context) {
+	/** Called when we know the MIME type of the final data 
+	 * @throws FetchException */
+	public void onExpectedMIME(String mime, ObjectContainer container, ClientContext context) throws FetchException {
 		if(finalizedMetadata) return;
-		expectedMIME = mime;
+		if(persistent()) {
+			container.activate(ctx, 1);
+		}
+		expectedMIME = ctx.overrideMIME == null ? mime : ctx.overrideMIME;
+		if(!(expectedMIME == null || expectedMIME.equals("") || expectedMIME.equals(DefaultMIMETypes.DEFAULT_MIME_TYPE))) {
+			MIMEType handler = ContentFilter.getMIMEType(expectedMIME);
+			if((handler == null || (handler.readFilter == null && !handler.safeToRead)) && ctx.filterData) {
+				UnsafeContentTypeException e;
+				if(handler == null) {
+					if(logMINOR) Logger.minor(this, "Unable to get filter handler for MIME type "+expectedMIME);
+					e = new UnknownContentTypeException(expectedMIME);
+				}
+				else {
+					if(logMINOR) Logger.minor(this, "Unable to filter unsafe MIME type "+expectedMIME);
+					e = new KnownUnsafeContentTypeException(handler);
+				}
+				throw new FetchException(e.getFetchErrorCode(), expectedSize, e.getMessage(), e, expectedMIME);
+			}
+		}
 		if(persistent()) {
 			container.store(this);
-			container.activate(ctx, 1);
 			container.activate(ctx.eventProducer, 1);
 		}
 		ctx.eventProducer.produceEvent(new ExpectedMIMEEvent(mime), container, context);

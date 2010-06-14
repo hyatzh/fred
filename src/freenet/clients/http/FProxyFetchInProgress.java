@@ -1,6 +1,8 @@
 package freenet.clients.http;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 import com.db4o.ObjectContainer;
 
@@ -54,6 +56,8 @@ public class FProxyFetchInProgress implements ClientEventListener, ClientGetCall
 	 * We may want to wake requests separately in future. */
 	private final ArrayList<FProxyFetchWaiter> waiters;
 	private final ArrayList<FProxyFetchResult> results;
+	/** Gets notified with every change*/
+	private final List<FProxyFetchListener> listener=Collections.synchronizedList(new ArrayList<FProxyFetchListener>());
 	/** The data, if we have it */
 	private Bucket data;
 	/** Creation time */
@@ -89,6 +93,11 @@ public class FProxyFetchInProgress implements ClientEventListener, ClientGetCall
 	/** Show even non-fatal failures for 5 seconds. Necessary for javascript to work,
 	 * because it fetches the page and then reloads it if it isn't a progress update. */
 	private long timeFailed;
+	/** If this is set, then it can be removed instantly, doesn't need to wait for 30sec*/
+	private boolean requestImmediateCancel=false;
+	private int fetched = 0;
+	/** Stores the fetch context this class was created with*/
+	private FetchContext fctx;
 	
 	public FProxyFetchInProgress(FProxyFetchTracker tracker, FreenetURI key, long maxSize2, long identifier, ClientContext context, FetchContext fctx, RequestClient rc) {
 		this.tracker = tracker;
@@ -96,12 +105,13 @@ public class FProxyFetchInProgress implements ClientEventListener, ClientGetCall
 		this.maxSize = maxSize2;
 		this.timeStarted = System.currentTimeMillis();
 		this.identifier = identifier;
-		fctx = new FetchContext(fctx, FetchContext.IDENTICAL_MASK, false, null);
-		fctx.maxOutputLength = fctx.maxTempLength = maxSize;
-		fctx.eventProducer.addEventListener(this);
+		this.fctx = fctx;
+		FetchContext alteredFctx = new FetchContext(fctx, FetchContext.IDENTICAL_MASK, false, null);
+		alteredFctx.maxOutputLength = fctx.maxTempLength = maxSize;
+		alteredFctx.eventProducer.addEventListener(this);
 		waiters = new ArrayList<FProxyFetchWaiter>();
 		results = new ArrayList<FProxyFetchResult>();
-		getter = new ClientGetter(this, uri, fctx, FProxyToadlet.PRIORITY, rc, null, null);
+		getter = new ClientGetter(this, uri, alteredFctx, FProxyToadlet.PRIORITY, rc, null, null);
 	}
 	
 	public synchronized FProxyFetchWaiter getWaiter() {
@@ -109,6 +119,10 @@ public class FProxyFetchInProgress implements ClientEventListener, ClientGetCall
 		FProxyFetchWaiter waiter = new FProxyFetchWaiter(this);
 		waiters.add(waiter);
 		return waiter;
+	}
+	
+	public void addCustomWaiter(FProxyFetchWaiter waiter){
+		waiters.add(waiter);
 	}
 
 	synchronized FProxyFetchResult innerGetResult(boolean hasWaited) {
@@ -121,6 +135,10 @@ public class FProxyFetchInProgress implements ClientEventListener, ClientGetCall
 					totalBlocks, requiredBlocks, fetchedBlocks, failedBlocks, fatallyFailedBlocks, finalizedBlocks, failed, getETA(), hasWaited);
 		}
 		results.add(res);
+		if(data != null || failed != null) {
+			res.setFetchCount(fetched);
+			fetched++;
+		}
 		return res;
 	}
 
@@ -147,37 +165,43 @@ public class FProxyFetchInProgress implements ClientEventListener, ClientGetCall
 	}
 
 	public void receive(ClientEvent ce, ObjectContainer maybeContainer, ClientContext context) {
-		if(ce instanceof SplitfileProgressEvent) {
-			SplitfileProgressEvent split = (SplitfileProgressEvent) ce;
-			synchronized(this) {
-				int oldReq = requiredBlocks - (fetchedBlocks + failedBlocks + fatallyFailedBlocks);
-				totalBlocks = split.totalBlocks;
-				fetchedBlocks = split.succeedBlocks;
-				requiredBlocks = split.minSuccessfulBlocks;
-				failedBlocks = split.failedBlocks;
-				fatallyFailedBlocks = split.fatallyFailedBlocks;
-				finalizedBlocks = split.finalizedTotal;
-				int req = requiredBlocks - (fetchedBlocks + failedBlocks + fatallyFailedBlocks);
-				if(!(req > 1024 && oldReq <= 1024)) return;
+		try{
+			if(ce instanceof SplitfileProgressEvent) {
+				SplitfileProgressEvent split = (SplitfileProgressEvent) ce;
+				synchronized(this) {
+					int oldReq = requiredBlocks - (fetchedBlocks + failedBlocks + fatallyFailedBlocks);
+					totalBlocks = split.totalBlocks;
+					fetchedBlocks = split.succeedBlocks;
+					requiredBlocks = split.minSuccessfulBlocks;
+					failedBlocks = split.failedBlocks;
+					fatallyFailedBlocks = split.fatallyFailedBlocks;
+					finalizedBlocks = split.finalizedTotal;
+					int req = requiredBlocks - (fetchedBlocks + failedBlocks + fatallyFailedBlocks);
+					if(!(req > 1024 && oldReq <= 1024)) return;
+				}
+			} else if(ce instanceof SendingToNetworkEvent) {
+				synchronized(this) {
+					if(goneToNetwork) return;
+					goneToNetwork = true;
+					fetchedBlocksPreNetwork = fetchedBlocks;
+				}
+			} else if(ce instanceof ExpectedMIMEEvent) {
+				synchronized(this) {
+					this.mimeType = ((ExpectedMIMEEvent)ce).expectedMIMEType;
+				}
+				if(!goneToNetwork) return;
+			} else if(ce instanceof ExpectedFileSizeEvent) {
+				synchronized(this) {
+					this.size = ((ExpectedFileSizeEvent)ce).expectedSize;
+				}
+				if(!goneToNetwork) return;
+			} else return;
+			wakeWaiters(false);
+		}finally{
+			for(FProxyFetchListener l:new ArrayList<FProxyFetchListener>(listener)){
+				l.onEvent();
 			}
-		} else if(ce instanceof SendingToNetworkEvent) {
-			synchronized(this) {
-				if(goneToNetwork) return;
-				goneToNetwork = true;
-				fetchedBlocksPreNetwork = fetchedBlocks;
-			}
-		} else if(ce instanceof ExpectedMIMEEvent) {
-			synchronized(this) {
-				this.mimeType = ((ExpectedMIMEEvent)ce).expectedMIMEType;
-			}
-			if(!goneToNetwork) return;
-		} else if(ce instanceof ExpectedFileSizeEvent) {
-			synchronized(this) {
-				this.size = ((ExpectedFileSizeEvent)ce).expectedSize;
-			}
-			if(!goneToNetwork) return;
-		} else return;
-		wakeWaiters(false);
+		}
 	}
 
 	private void wakeWaiters(boolean finished) {
@@ -187,6 +211,11 @@ public class FProxyFetchInProgress implements ClientEventListener, ClientGetCall
 		}
 		for(FProxyFetchWaiter w : waiting) {
 			w.wakeUp(finished);
+		}
+		if(finished==true){
+			for(FProxyFetchListener l:new ArrayList<FProxyFetchListener>(listener)){
+				l.onEvent();
+			}
 		}
 	}
 
@@ -238,7 +267,8 @@ public class FProxyFetchInProgress implements ClientEventListener, ClientGetCall
 	public synchronized boolean canCancel() {
 		if(!waiters.isEmpty()) return false;
 		if(!results.isEmpty()) return false;
-		if(lastTouched + LIFETIME >= System.currentTimeMillis()) {
+		if(!listener.isEmpty()) return false;
+		if(lastTouched + LIFETIME >= System.currentTimeMillis() && !requestImmediateCancel) {
 			if(logMINOR) Logger.minor(this, "Not able to cancel for "+this+" : "+uri+" : "+maxSize);
 			return false;
 		}
@@ -288,7 +318,7 @@ public class FProxyFetchInProgress implements ClientEventListener, ClientGetCall
 			hasNotifiedFailure = true;
 			return true;
 		}
-		if(failed != null && System.currentTimeMillis() - timeFailed < 5000)
+		if(failed != null && (System.currentTimeMillis() - timeFailed < 1000 || fetched < 2)) // Once for javascript and once for the user when it re-pulls.
 			return true;
 		return false;
 	}
@@ -304,4 +334,46 @@ public class FProxyFetchInProgress implements ClientEventListener, ClientGetCall
 	public synchronized void setHasWaited() {
 		hasWaited = true;
 	}
+	
+	/** Adds a listener that will be notified when a change occurs to this fetch
+	 * @param listener - The listener to be added*/
+	public void addListener(FProxyFetchListener listener){
+		if(logMINOR){
+			Logger.minor(this,"Registered listener:"+listener);
+		}
+		this.listener.add(listener);
+	}
+	
+	/** Removes a listener
+	 * @param listener - The listener to be removed*/
+	public void removeListener(FProxyFetchListener listener){
+		if(logMINOR){
+			Logger.minor(this,"Removed listener:"+listener);
+		}
+		this.listener.remove(listener);
+		if(logMINOR){
+			Logger.minor(this,"can cancel now?:"+canCancel());
+		}
+	}
+	
+	/** Allows the fetch to be removed immediately*/
+	public void requestImmediateCancel(){
+		requestImmediateCancel=true;
+	}
+
+	public long lastTouched() {
+		return lastTouched;
+	}
+	
+	public boolean fetchContextEquivalent(FetchContext context) {
+		if(this.fctx.filterData != context.filterData) return false;
+		if(this.fctx.maxOutputLength != context.maxOutputLength) return false;
+		if(this.fctx.maxTempLength != context.maxTempLength) return false;
+		if(this.fctx.charset == null && context.charset != null) return false;
+		if(this.fctx.charset != null && !this.fctx.charset.equals(context.charset)) return false;
+		if(this.fctx.overrideMIME == null && context.overrideMIME != null) return false;
+		if(this.fctx.overrideMIME != null && !this.fctx.overrideMIME.equals(context.overrideMIME)) return false;
+		return true;
+	}
+
 }

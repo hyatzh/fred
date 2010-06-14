@@ -79,10 +79,16 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 	// going by memory usage only; 4kB per stripe
 	static final int MAX_SPLITFILE_BLOCKS_PER_SEGMENT = 1024;
 	static final int MAX_SPLITFILE_CHECK_BLOCKS_PER_SEGMENT = 1536;
-	public static final int SPLITFILE_BLOCKS_PER_SEGMENT = 128;
-	static final int SPLITFILE_CHECK_BLOCKS_PER_SEGMENT = 128;
+	// For scaling purposes, 128 data 128 check blocks i.e. one check block per data block.
+	public static final int SPLITFILE_SCALING_BLOCKS_PER_SEGMENT = 128;
+	/* We can go down to 131 data 125 check if it avoids creating a new segment.
+	 * FECCodec.standardOnionCheckBlocks will automatically reduce check blocks to compensate for more than half data blocks. */
+	public static final int SPLITFILE_BLOCKS_PER_SEGMENT = 131;
+	public static final int SPLITFILE_CHECK_BLOCKS_PER_SEGMENT = 128;
 	public static final int EXTRA_INSERTS_SINGLE_BLOCK = 0;
 	public static final int EXTRA_INSERTS_SPLITFILE_HEADER = 2;
+	/*Whether or not to filter fetched content*/
+	static final boolean FILTER_DATA = false;
 
 	public HighLevelSimpleClientImpl(NodeClientCore node, BucketFactory bf, RandomSource r, short priorityClass, boolean forceDontIgnoreTooManyPathComponents) {
 		this.core = node;
@@ -161,6 +167,10 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 	}
 
 	public ClientGetter fetch(FreenetURI uri, long maxSize, RequestClient clientContext, ClientGetCallback callback, FetchContext fctx, short prio) throws FetchException {
+		return fetch(uri, clientContext, callback, fctx, prio);
+	}
+	
+	public ClientGetter fetch(FreenetURI uri, RequestClient clientContext, ClientGetCallback callback, FetchContext fctx, short prio) throws FetchException {
 		if(uri == null) throw new NullPointerException();
 		ClientGetter get = new ClientGetter(callback, uri, fctx, prio, clientContext, null, null);
 		try {
@@ -172,14 +182,27 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 	}
 
 	public FreenetURI insert(InsertBlock insert, boolean getCHKOnly, String filenameHint) throws InsertException {
-		return insert(insert, getCHKOnly, filenameHint, false);
+		return insert(insert, getCHKOnly, filenameHint, priorityClass);
+	}
+	
+	public FreenetURI insert(InsertBlock insert, boolean getCHKOnly, String filenameHint, short priority) throws InsertException {
+		return insert(insert, getCHKOnly, filenameHint, false, priority);
 	}
 
-	public FreenetURI insert(InsertBlock insert, boolean getCHKOnly, String filenameHint, boolean isMetadata) throws InsertException {
+	public FreenetURI insert(InsertBlock insert, boolean getCHKOnly, String filenameHint, boolean isMetadata, short priority) throws InsertException {
+		InsertContext context = getInsertContext(true);
+		return insert(insert, getCHKOnly, filenameHint, isMetadata, priority, context);
+	}
+	
+	public FreenetURI insert(InsertBlock insert, boolean getCHKOnly, String filenameHint, short priority, InsertContext ctx) throws InsertException {
+		return insert(insert, getCHKOnly, filenameHint, false, priority, ctx);
+	}
+	
+	public FreenetURI insert(InsertBlock insert, boolean getCHKOnly, String filenameHint, boolean isMetadata, short priority, InsertContext ctx) throws InsertException {
 		InsertContext context = getInsertContext(true);
 		PutWaiter pw = new PutWaiter();
 		ClientPutter put = new ClientPutter(pw, insert.getData(), insert.desiredURI, insert.clientMetadata,
-				context, priorityClass,
+				context, priority,
 				getCHKOnly, isMetadata, this, null, filenameHint, false);
 		try {
 			core.clientContext.start(put, false);
@@ -190,8 +213,12 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 	}
 
 	public ClientPutter insert(InsertBlock insert, boolean getCHKOnly, String filenameHint, boolean isMetadata, InsertContext ctx, ClientPutCallback cb) throws InsertException {
+		return insert(insert, getCHKOnly, filenameHint, isMetadata, ctx, cb, priorityClass);
+	}
+	
+	public ClientPutter insert(InsertBlock insert, boolean getCHKOnly, String filenameHint, boolean isMetadata, InsertContext ctx, ClientPutCallback cb, short priority) throws InsertException {
 		ClientPutter put = new ClientPutter(cb, insert.getData(), insert.desiredURI, insert.clientMetadata,
-				ctx, priorityClass,
+				ctx, priority,
 				getCHKOnly, isMetadata, this, null, filenameHint, false);
 		try {
 			core.clientContext.start(put, false);
@@ -215,7 +242,7 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 		}
 
 		InsertBlock block = new InsertBlock(b, null, insertURI);
-		return insert(block, false, null, true);
+		return insert(block, false, null, true, priorityClass);
 	}
 
 	public FreenetURI insertManifest(FreenetURI insertURI, HashMap<String, Object> bucketsByName, String defaultName) throws InsertException {
@@ -250,16 +277,16 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 				MAX_RECURSION, MAX_ARCHIVE_RESTARTS, MAX_ARCHIVE_LEVELS, DONT_ENTER_IMPLICIT_ARCHIVES,
 				SPLITFILE_BLOCK_RETRIES, NON_SPLITFILE_RETRIES, USK_RETRIES,
 				FETCH_SPLITFILES, FOLLOW_REDIRECTS, LOCAL_REQUESTS_ONLY,
-				MAX_SPLITFILE_BLOCKS_PER_SEGMENT, MAX_SPLITFILE_CHECK_BLOCKS_PER_SEGMENT,
+				FILTER_DATA, MAX_SPLITFILE_BLOCKS_PER_SEGMENT, MAX_SPLITFILE_CHECK_BLOCKS_PER_SEGMENT, 
 				bucketFactory, eventProducer,
-				false, CAN_WRITE_CLIENT_CACHE);
+				false, CAN_WRITE_CLIENT_CACHE, null, null);
 	}
 
 	public InsertContext getInsertContext(boolean forceNonPersistent) {
 		return new InsertContext(
 				INSERT_RETRIES, CONSECUTIVE_RNFS_ASSUME_SUCCESS,
 				SPLITFILE_BLOCKS_PER_SEGMENT, SPLITFILE_CHECK_BLOCKS_PER_SEGMENT,
-				eventProducer, CAN_WRITE_CLIENT_CACHE_INSERTS, Node.FORK_ON_CACHEABLE_DEFAULT, Compressor.DEFAULT_COMPRESSORDESCRIPTOR, EXTRA_INSERTS_SINGLE_BLOCK, EXTRA_INSERTS_SPLITFILE_HEADER);
+				eventProducer, CAN_WRITE_CLIENT_CACHE_INSERTS, Node.FORK_ON_CACHEABLE_DEFAULT, Compressor.DEFAULT_COMPRESSORDESCRIPTOR, EXTRA_INSERTS_SINGLE_BLOCK, EXTRA_INSERTS_SPLITFILE_HEADER, 0);
 	}
 
 	public FreenetURI[] generateKeyPair(String docName) {

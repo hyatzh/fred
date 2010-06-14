@@ -104,26 +104,26 @@ public class PluginInfoWrapper implements Comparable<PluginInfoWrapper> {
 		return toadletLinks.remove(linkfrom);
 	}
 	
-	/**
-	 * Tell the plugin to quit. Interrupt it if it's a thread-based plugin which
-	 * might be sleeping. Then call removePlugin() on it on the manager - either
-	 * now, if it's threadless, or after it terminates, if it's thread based.
-	 * @param manager The plugin manager object.
-	 * @param maxWaitTime If a plugin is thread-based, we can wait for it to
-	 * terminate. Set to -1 if you don't want to wait at all, 0 to wait forever
-	 * or else a value in milliseconds.
-	 **/
-	public void stopPlugin(PluginManager manager, int maxWaitTime, boolean reloading) {
+	public void startShutdownPlugin(PluginManager manager, boolean reloading) {
 		unregister(manager, reloading);
 		// TODO add a timeout for plug.terminate() too
+		System.out.println("Terminating plugin "+this.getFilename());
 		try {
 			plug.terminate();
 		} catch (Throwable t) {
 			Logger.error(this, "Error while terminating plugin.", t);
+			System.err.println("Error while terminating plugin: "+t);
+			t.printStackTrace();
 		}
 		synchronized(this) {
 			stopping = true;
 		}
+	}
+	
+	
+	
+	public boolean finishShutdownPlugin(PluginManager manager, int maxWaitTime, boolean reloading) {
+		boolean success = true;
 		if(thread != null) {
 			thread.interrupt();
 			// Will be removed when the thread exits.
@@ -137,7 +137,7 @@ public class PluginInfoWrapper implements Comparable<PluginInfoWrapper> {
 					String error = "Waited for "+thread+" for "+plug+" to exit for "+maxWaitTime+"ms, and it is still alive!";
 					Logger.error(this, error);
 					System.err.println(error);
-					// Dump the thread? Would require post-1.4 features...
+					success = false;
 				}
 			}
 		}
@@ -147,7 +147,21 @@ public class PluginInfoWrapper implements Comparable<PluginInfoWrapper> {
 		if (cl instanceof JarClassLoader) {
 			Closer.close((JarClassLoader) cl);
 		}
-		
+		return success;
+	}
+	
+	/**
+	 * Tell the plugin to quit. Interrupt it if it's a thread-based plugin which
+	 * might be sleeping. Then call removePlugin() on it on the manager - either
+	 * now, if it's threadless, or after it terminates, if it's thread based.
+	 * @param manager The plugin manager object.
+	 * @param maxWaitTime If a plugin is thread-based, we can wait for it to
+	 * terminate. Set to -1 if you don't want to wait at all, 0 to wait forever
+	 * or else a value in milliseconds.
+	 **/
+	public void stopPlugin(PluginManager manager, int maxWaitTime, boolean reloading) {
+		startShutdownPlugin(manager, reloading);
+		finishShutdownPlugin(manager, maxWaitTime, reloading);
 		// always remove plugin
 		manager.removePlugin(this);
 	}

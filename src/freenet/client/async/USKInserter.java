@@ -4,6 +4,7 @@
 package freenet.client.async;
 
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
 import java.net.MalformedURLException;
 import java.util.Arrays;
 
@@ -16,6 +17,7 @@ import freenet.keys.BaseClientKey;
 import freenet.keys.FreenetURI;
 import freenet.keys.InsertableUSK;
 import freenet.keys.USK;
+import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
 import freenet.support.api.Bucket;
 import freenet.support.io.BucketTools;
@@ -27,6 +29,18 @@ import freenet.support.io.BucketTools;
  */
 public class USKInserter implements ClientPutState, USKFetcherCallback, PutCompletionCallback {
 
+	private static volatile boolean logMINOR;
+	
+	static {
+		Logger.registerLogThresholdCallback(new LogThresholdCallback() {
+			
+			@Override
+			public void shouldUpdate() {
+				logMINOR = Logger.shouldLog(Logger.MINOR, this);
+			}
+		});
+	}
+	
 	// Stuff to be passed on to the SingleBlockInserter
 	final BaseClientPutter parent;
 	Bucket data;
@@ -131,7 +145,7 @@ public class USKInserter implements ClientPutState, USKFetcherCallback, PutCompl
 				container.activate(pubUSK, 5);
 			}
 			cb.onEncode(pubUSK.copy(edition), this, container, context);
-			cb.onSuccess(this, container, context);
+			insertSucceeded(container, context, l);
 			if(freeData) {
 				data.free();
 				if(persistent) data.removeFrom(container);
@@ -139,6 +153,64 @@ public class USKInserter implements ClientPutState, USKFetcherCallback, PutCompl
 		} else {
 			scheduleInsert(container, context);
 		}
+	}
+
+	private void insertSucceeded(ObjectContainer container, ClientContext context, long edition) {
+		if(logMINOR) Logger.minor(this, "Inserted to edition "+edition+" - inserting USK date hints...");
+		USKDateHint hint = USKDateHint.now();
+		MultiPutCompletionCallback m = new MultiPutCompletionCallback(cb, parent, tokenObject, persistent, true);
+		byte[] hintData;
+		try {
+			hintData = hint.getData(edition).getBytes("UTF-8");
+		} catch (UnsupportedEncodingException e) {
+			throw new Error(e); // Impossible
+		}
+		boolean cbActive = true;
+		boolean parentActive = true;
+		if(persistent) {
+			container.activate(privUSK, 5);
+			container.activate(pubUSK, 5);
+			if(!container.ext().isActive(cb)) {
+				cbActive = false;
+				container.activate(cb, 1);
+			}
+			if(!container.ext().isActive(parent)) {
+				parentActive = false;
+				container.activate(parent, 1);
+			}
+		}
+		FreenetURI[] hintURIs = hint.getInsertURIs(privUSK);
+		boolean added = false;
+		for(FreenetURI uri : hintURIs) {
+			try {
+				Bucket bucket = BucketTools.makeImmutableBucket(context.getBucketFactory(persistent), hintData);
+				SingleBlockInserter sb = 
+					new SingleBlockInserter(parent, bucket, (short) -1, uri,
+							ctx, m, false, sourceLength, token, getCHKOnly, true, true /* we don't use it */, null, container, context, persistent, false, extraInserts);
+				Logger.normal(this, "Inserting "+uri+" for insert of "+pubUSK);
+				m.add(sb, container);
+				sb.schedule(container, context);
+				added = true;
+			} catch (IOException e) {
+				Logger.error(this, "Unable to insert USK date hints due to disk I/O error: "+e, e);
+				if(!added) {
+					cb.onFailure(new InsertException(InsertException.BUCKET_ERROR, e, pubUSK.getSSK(edition).getURI()), this, container, context);
+					return;
+				} // Else try to insert the other hints.
+			} catch (InsertException e) {
+				Logger.error(this, "Unable to insert USK date hints due to disk I/O error: "+e, e);
+				if(!added) {
+					cb.onFailure(e, this, container, context);
+					return;
+				} // Else try to insert the other hints.
+			}
+		}
+		cb.onTransition(this, m, container);
+		m.arm(container, context);
+		if(!parentActive)
+			container.deactivate(parent, 1);
+		if(!cbActive)
+			container.deactivate(cb, 1);
 	}
 
 	private void scheduleInsert(ObjectContainer container, ClientContext context) {
@@ -204,7 +276,7 @@ public class USKInserter implements ClientPutState, USKFetcherCallback, PutCompl
 			container.store(this);
 		}
 		cb.onEncode(newEdition, this, container, context);
-		cb.onSuccess(this, container, context);
+		insertSucceeded(container, context, edition);
 		// FINISHED!!!! Yay!!!
 	}
 
@@ -267,7 +339,6 @@ public class USKInserter implements ClientPutState, USKFetcherCallback, PutCompl
 		this.token = token;
 		this.getCHKOnly = getCHKOnly;
 		if(addToParent) {
-			parent.addBlock(container);
 			parent.addMustSucceedBlocks(1, container);
 			parent.notifyClients(container, context);
 		}

@@ -23,8 +23,11 @@ import java.util.Locale;
 import java.util.NoSuchElementException;
 import java.util.StringTokenizer;
 import java.util.TimeZone;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.zip.GZIPOutputStream;
 
+import freenet.node.SemiOrderedShutdownHook;
 import freenet.node.Version;
 import freenet.support.io.FileUtil;
 
@@ -91,16 +94,24 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 	/* Whether to redirect stderr */
 	protected boolean redirectStdErr = false;
 
+	protected final int MAX_LIST_SIZE;
+	protected long MAX_LIST_BYTES = 10 * (1 << 20);
+	protected long LIST_WRITE_THRESHOLD;
+
 	/**
 	 * Something weird happens when the disk gets full, also we don't want to
 	 * block So run the actual write on another thread
+	 * 
+	 * Unfortunately, we can't use ConcurrentBlockingQueue because we need to dump stuff when the queue gets
+	 * too big.
+	 * 
+	 * FIXME PERFORMANCE: Using an ArrayBlockingQueue avoids some unnecessary memory allocations, but it 
+	 * means we have to take two locks. 
+	 * Seriously consider reverting 88268b99856919df0d42c2787d9ea3674a9f6f0d..e359b4005ef728a159fdee988c483de8ce8f3f6b
+	 * to go back to one lock and a LinkedList.
 	 */
-	protected final LinkedList<byte[]> list = new LinkedList<byte[]>();
+	protected final ArrayBlockingQueue<byte[]> list;
 	protected long listBytes = 0;
-
-	protected int MAX_LIST_SIZE = 100000;
-	protected long MAX_LIST_BYTES = 10 * (1 << 20);
-	// FIXME: should reimplement LinkedList with minimal locking
 
 	long maxOldLogfilesDiskUsage;
 	protected final LinkedList<OldLogFile> logFiles = new LinkedList<OldLogFile>();
@@ -119,15 +130,10 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 		final long size;
 	}
 	
-	public void setMaxListLength(int len) {
-		synchronized(list) {
-			MAX_LIST_SIZE = len;
-		}
-	}
-
 	public void setMaxListBytes(long len) {
 		synchronized(list) {
 			MAX_LIST_BYTES = len;
+			LIST_WRITE_THRESHOLD = MAX_LIST_BYTES / 4;
 		}
 	}
 
@@ -215,6 +221,9 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 		buf.append(s);
 		return buf;
 	}
+	
+	// Unless we are writing flat out, everything will hit disk within this period.
+	private long flushTime = 1000; // Default is 1 second. Will be set by setMaxBacklogNotBusy().
 
 	class WriterThread extends Thread {
 		WriterThread() {
@@ -274,6 +283,11 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 				gc.add(INTERVAL, INTERVAL_MULTIPLIER);
 				nextHour = gc.getTimeInMillis();
 			}
+			long timeWaitingForSync = -1;
+			long flush;
+			synchronized(this) {
+				flush = flushTime;
+			}
 			while (true) {
 				try {
 					thisTime = System.currentTimeMillis();
@@ -292,26 +306,57 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 							}
 						}
 					}
-					if(list.size() == 0) {
-						if(currentFilename == null)
-							myWrite(logStream, null);
-				        if(altLogStream != null)
-				        	myWrite(altLogStream, null);
-					}
+					boolean died = false;
+					boolean timeoutFlush = false;
 					synchronized (list) {
-						while (list.size() == 0) {
+						flush = flushTime;
+						long maxWait;
+						if(timeWaitingForSync == -1)
+							maxWait = Long.MAX_VALUE;
+						else
+							maxWait = timeWaitingForSync + flush;
+						o = list.poll();
+						while(o == null) {
 							if (closed) {
-								return;
+								died = true;
+								break;
 							}
 							try {
-								list.wait(500);
+								if(thisTime < maxWait) {
+									list.wait(Math.min(500, (int)(Math.min(maxWait-thisTime, Integer.MAX_VALUE))));
+									if(listBytes < LIST_WRITE_THRESHOLD) // Don't write at all until the lower bytes threshold is exceeded, or the time threshold is.
+										continue;
+									// Do NOT use list.poll(timeout) because it uses a separate lock.
+									o = list.poll();
+								}
 							} catch (InterruptedException e) {
 								// Ignored.
 							}
+							thisTime = System.currentTimeMillis();
+							if(o == null) {
+								if(timeWaitingForSync == -1) {
+									timeWaitingForSync = thisTime;
+									maxWait = thisTime + flush;
+								}
+								if(thisTime >= maxWait) {
+									timeoutFlush = true;
+									timeWaitingForSync = -1; // We have stuff to write, we are no longer waiting.
+									break;
+								}
+							} else break;
 						}
-						o = list.removeFirst();
-						listBytes -= o.length + LINE_OVERHEAD;
+						if(o != null) {
+							listBytes -= o.length + LINE_OVERHEAD;
+						}
 					}
+					if(timeoutFlush || died) {
+						// Flush to disk 
+						myWrite(logStream, null);
+				        if(altLogStream != null)
+				        	myWrite(altLogStream, null);
+					}
+					if(died) return;
+					if(o == null) continue;
 					myWrite(logStream,  o);
 			        if(altLogStream != null)
 			        	myWrite(altLogStream, o);
@@ -411,13 +456,13 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 					OutputStream o = new FileOutputStream(filename, !logOverwrite);
 					if(compress) {
 						// buffer -> gzip -> buffer -> file
-						o = new BufferedOutputStream(o, 32768); // to file
+						o = new BufferedOutputStream(o, 512*1024); // to file
 						o = new GZIPOutputStream(o);
 						// gzip block size is 32kB
 						o = new BufferedOutputStream(o, 65536); // to gzipper
 					} else {
 						// buffer -> file
-						o = new BufferedOutputStream(o, 32768);
+						o = new BufferedOutputStream(o, 512*1024);
 					}
 					return o;
 				} catch (IOException e) {
@@ -465,7 +510,7 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 		int threshold,
 		boolean assumeWorking,
 		boolean logOverwrite,
-		long maxOldLogfilesDiskUsage)
+		long maxOldLogfilesDiskUsage, int maxListSize)
 		throws IOException {
 		this(
 			false,
@@ -475,7 +520,8 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 			threshold,
 			assumeWorking,
 			logOverwrite,
-			maxOldLogfilesDiskUsage);
+			maxOldLogfilesDiskUsage,
+			maxListSize);
 	}
 	
 	private final Object trimOldLogFilesLock = new Object();
@@ -627,7 +673,8 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 			String threshold,
 			boolean assumeWorking,
 			boolean logOverwrite,
-			long maxOldLogFilesDiskUsage)
+			long maxOldLogFilesDiskUsage,
+			int maxListSize)
 			throws IOException, InvalidThresholdException {
 			this(filename,
 				fmt,
@@ -635,7 +682,8 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 				priorityOf(threshold),
 				assumeWorking,
 				logOverwrite,
-				maxOldLogFilesDiskUsage);
+				maxOldLogFilesDiskUsage,
+				maxListSize);
 		}
 
 	private void checkStdStreams() {
@@ -687,7 +735,7 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 		String dfmt,
 		int threshold,
 		boolean overwrite) {
-		this(fmt, dfmt, threshold, overwrite, -1);
+		this(fmt, dfmt, threshold, overwrite, -1, 10000);
 		logStream = stream;
 	}
 
@@ -699,7 +747,7 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 		WriterThread wt = new WriterThread();
 		wt.setDaemon(true);
 		CloserThread ct = new CloserThread();
-		Runtime.getRuntime().addShutdownHook(ct);
+		SemiOrderedShutdownHook.get().addLateJob(ct);
 		wt.start();
 	}
 	
@@ -711,9 +759,9 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 		int threshold,
 		boolean assumeWorking,
 		boolean logOverwrite,
-		long maxOldLogfilesDiskUsage)
+		long maxOldLogfilesDiskUsage, int maxListSize)
 		throws IOException {
-		this(fmt, dfmt, threshold, logOverwrite, maxOldLogfilesDiskUsage);
+		this(fmt, dfmt, threshold, logOverwrite, maxOldLogfilesDiskUsage, maxListSize);
 		//System.err.println("Creating FileLoggerHook with threshold
 		// "+threshold);
 		if (!assumeWorking)
@@ -733,14 +781,17 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 			String threshold,
 			boolean assumeWorking,
 			boolean logOverwrite,
-			long maxOldLogFilesDiskUsage) throws IOException, InvalidThresholdException{
-		this(rotate,baseFilename,fmt,dfmt,priorityOf(threshold),assumeWorking,logOverwrite,maxOldLogFilesDiskUsage);
+			long maxOldLogFilesDiskUsage, int maxListSize) throws IOException, InvalidThresholdException{
+		this(rotate,baseFilename,fmt,dfmt,priorityOf(threshold),assumeWorking,logOverwrite,maxOldLogFilesDiskUsage,maxListSize);
 	}
 
-	private FileLoggerHook(String fmt, String dfmt, int threshold, boolean overwrite, long maxOldLogfilesDiskUsage) {
+	private FileLoggerHook(String fmt, String dfmt, int threshold, boolean overwrite, long maxOldLogfilesDiskUsage, int maxListSize) {
 		super(threshold);
 		this.maxOldLogfilesDiskUsage = maxOldLogfilesDiskUsage;
 		this.logOverwrite = overwrite;
+		
+		MAX_LIST_SIZE = maxListSize;
+		list = new ArrayBlockingQueue<byte[]>(MAX_LIST_SIZE);
 		
 		setDateFormat(dfmt);
 		setLogFormat(fmt);
@@ -884,15 +935,18 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 		int noElementCount = 0;
 		synchronized (list) {
 			int sz = list.size();
-			list.add(b);
+			if(!list.offer(b)) {
+				list.poll();
+				list.offer(b);
+			}
 			listBytes += (b.length + LINE_OVERHEAD); /* total guess */
 			int x = 0;
-			if ((list.size() > MAX_LIST_SIZE) || (listBytes > MAX_LIST_BYTES)) {
+			if (listBytes > MAX_LIST_BYTES) {
 				while ((list.size() > (MAX_LIST_SIZE * 0.9F))
 					|| (listBytes > (MAX_LIST_BYTES * 0.9F))) {
 					byte[] ss;
 					try {
-						ss = list.removeFirst();
+						ss = list.poll();
 					} catch (NoSuchElementException e) {
 						// Yes I know this is impossible but it happens with 1.6 with heap profiling enabled
 						// This is a bug in sun/netbeans profiler around 2006 era
@@ -914,7 +968,10 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 						+ listBytes
 						+ " bytes in memory\n";
 				byte[] buf = err.getBytes();
-				list.add(0, buf);
+				if(!list.offer(buf)) {
+					list.poll();
+					list.offer(buf);
+				}
 				listBytes += (buf.length + LINE_OVERHEAD);
 			}
 			if (sz == 0)
@@ -1095,5 +1152,9 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 	 */
 	public boolean hasRedirectedStdOutErrNoLock() {
 		return redirectStdOut || redirectStdErr;
+	}
+
+	public synchronized void setMaxBacklogNotBusy(long val) {
+		flushTime = val;
 	}
 }
