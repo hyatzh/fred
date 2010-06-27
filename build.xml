@@ -23,6 +23,9 @@
 	<property name="lib" location="lib"/>
 	<property name="freenet-ext.location" location="../foe/orbit/lib/freenet-ext.jar"/>
 	<property name="wrapper.jar.location" location="../foe/orbit/lib/wrapper.jar"/>
+	<property name="framework.jar.location" location="../concierge/framework/dist/fconcierge.jar"/>
+	<property name="freenetlogger.jar.location" location="../foe/FreenetLogger/dist/FreenetLogger.jar"/>
+
 	<property name="javadoc" location="javadoc"/>
 	<property name="minExtVersion" value="-1"/>
 	<property name="recommendedExtVersion" value="-1"/>
@@ -38,9 +41,8 @@
 	<path id="lib.path">
 		<pathelement location="${freenet-ext.location}"/>
 		<pathelement location="${wrapper.jar.location}"/>
-		<pathelement location="gnu-crypto.jar"/>
-		<pathelement location="javax-security.jar"/>
-		<pathelement location="javax-crypto.jar"/>
+		<pathelement location="${framework.jar.location}"/>
+		<pathelement location="${freenetlogger.jar.location}"/>
 	</path>
 
 	<assertions>
