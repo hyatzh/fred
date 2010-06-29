@@ -210,7 +210,7 @@ public abstract class Logger {
 		public boolean matchesThreshold(LogLevel threshold) {
 			return this.ordinal() >= threshold.ordinal();
 		}
-		
+
 		@Deprecated
 		public static LogLevel fromOrdinal(int ordinal) {
 			for(LogLevel level : LogLevel.values()) {
@@ -219,6 +219,14 @@ public abstract class Logger {
 			}
 			
 			throw new RuntimeException("Invalid ordinal: " + ordinal);
+		}
+
+		public static LogLevel fromNewApi(freenet.log.Logger.LogLevel level) {
+			return fromOrdinal(level.ordinal());
+		}
+
+		public static freenet.log.Logger.LogLevel toNewApi(LogLevel level) {
+			return freenet.log.Logger.LogLevel.fromOrdinal(level.ordinal());
 		}
 	}
 
@@ -673,13 +681,13 @@ public abstract class Logger {
 	static class HookWrapper extends LoggerHook {
 		final freenet.log.LoggerHook hook;
 		HookWrapper(freenet.log.LoggerHook h) {
-			super(LogLevel.fromOrdinal(h.getThreshold()));
+			super(LogLevel.fromNewApi(h.getThreshold()));
 			hook = h;
 		}
 		@Override
 		public void log(Object o, Class<?> source, String message, Throwable e,
 				LogLevel priority) {
-			hook.log(o, source, message, e, priority.ordinal());
+			hook.log(o, source, message, e, LogLevel.toNewApi(priority));
 		}
 	}
 

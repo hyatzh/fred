@@ -10,6 +10,7 @@ import org.osgi.service.log.LogService;
 import freenet.log.Logger;
 import freenet.log.LoggerHook;
 import freenet.log.OSGiLoggerHook;
+import freenet.log.Logger.LogLevel;
 import freenet.node.NodeStarter;
 
 public class FreenetServiceActivator implements BundleActivator {
@@ -28,7 +29,7 @@ public class FreenetServiceActivator implements BundleActivator {
 
 		LoggerHook hook;
 		hook = new OSGiLoggerHook(ls,
-				"(c, t, p): m", "MMM dd, yyyy HH:mm:ss:SSS", 0);
+				"(c, t, p): m", "MMM dd, yyyy HH:mm:ss:SSS", LogLevel.DEBUG);
 
 		Logger.globalAddHook(hook);
 		
