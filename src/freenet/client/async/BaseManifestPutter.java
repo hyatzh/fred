@@ -991,12 +991,12 @@ public abstract class BaseManifestPutter extends BaseClientPutter {
 		this.ctx = ctx;
 		this.getCHKOnly = getCHKOnly2;
 		this.earlyEncode = earlyEncode;
-		if(randomiseCryptoKeys) {
-			forceCryptoKey = new byte[32];
-			context.random.nextBytes(forceCryptoKey);
-		} else {
+//		if(randomiseCryptoKeys) {
+//			forceCryptoKey = new byte[32];
+//			context.random.nextBytes(forceCryptoKey);
+//		} else {
 			forceCryptoKey = null;
-		}
+//		}
 		this.cryptoAlgorithm = Key.ALGO_AES_PCFB_256_SHA256;
 		runningPutHandlers = new HashSet<PutHandler>();
 		putHandlersWaitingForMetadata = new HashSet<PutHandler>();
