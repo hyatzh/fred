@@ -7,6 +7,8 @@ import com.db4o.ObjectContainer;
 
 import freenet.client.FetchException;
 import freenet.client.FetchResult;
+import freenet.client.InsertContext.CompatibilityMode;
+import freenet.crypt.HashResult;
 import freenet.keys.FreenetURI;
 import freenet.keys.USK;
 
@@ -83,6 +85,18 @@ public class USKProxyCompletionCallback implements GetCompletionCallback {
 		if(container != null && persistent)
 			container.activate(cb, 1);
 		cb.onFinalizedMetadata(container);
+	}
+
+	public void onExpectedTopSize(long size, long compressed, int blocksReq, int blocksTotal, ObjectContainer container, ClientContext context) {
+		cb.onExpectedTopSize(size, compressed, blocksReq, blocksTotal, container, context);
+	}
+
+	public void onSplitfileCompatibilityMode(CompatibilityMode min, CompatibilityMode max, byte[] splitfileKey, boolean dontCompress, boolean bottomLayer, boolean definitiveAnyway, ObjectContainer container, ClientContext context) {
+		cb.onSplitfileCompatibilityMode(min, max, splitfileKey, dontCompress, bottomLayer, definitiveAnyway, container, context);
+	}
+
+	public void onHashes(HashResult[] hashes, ObjectContainer container, ClientContext context) {
+		cb.onHashes(hashes, container, context);
 	}
 
 }

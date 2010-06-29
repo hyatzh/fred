@@ -8,6 +8,7 @@ import java.util.TimeZone;
 
 import freenet.support.Fields;
 import freenet.support.Logger;
+import freenet.support.Logger.LogLevel;
 
 /**
  * Central spot for stuff related to the versioning of the codebase.
@@ -48,17 +49,17 @@ public class Version {
 	public static final String protocolVersion = "1.0";
 
 	/** The build number of the current revision */
-	private static final int buildNumber = 1252;
+	private static final int buildNumber = 1254;
 
 	/** Oldest build of Fred we will talk to */
 	private static final int oldLastGoodBuild = 1252;
-	private static final int newLastGoodBuild = 1252;
+	private static final int newLastGoodBuild = 1253;
 	static final long transitionTime;
 
 	static {
 		final Calendar _cal = Calendar.getInstance(TimeZone.getTimeZone("GMT"));
 		// year, month - 1 (or constant), day, hour, minute, second
-		_cal.set( 2010, Calendar.JUNE, 14, 0, 0, 0 );
+		_cal.set( 2010, Calendar.JUNE, 21, 0, 0, 0 );
 		transitionTime = _cal.getTimeInMillis();
 	}
 
@@ -126,7 +127,7 @@ public class Version {
 		return cvsRevision;
 	}
 
-	private static boolean logDEBUG = Logger.shouldLog(Logger.DEBUG,Version.class);
+	private static boolean logDEBUG = Logger.shouldLog(LogLevel.DEBUG,Version.class);
 
 	/**
 	 * @return the node's version designators as an array
@@ -201,7 +202,7 @@ public class Version {
 					return false;
 				}
 			} catch (NumberFormatException e) {
-				if(Logger.shouldLog(Logger.MINOR, Version.class))
+				if(Logger.shouldLog(LogLevel.MINOR, Version.class))
 					Logger.minor(Version.class,
 							"Not accepting (" + e + ") from " + version);
 				return false;
@@ -272,7 +273,7 @@ public class Version {
 					return false;
 				}
 			} catch (NumberFormatException e) {
-				if(Logger.shouldLog(Logger.MINOR, Version.class))
+				if(Logger.shouldLog(LogLevel.MINOR, Version.class))
 					Logger.minor(Version.class,
 							"Not accepting (" + e + ") from " + version + " and/or " + lastGoodVersion);
 				return false;
@@ -387,7 +388,7 @@ public class Version {
 				return;
 			}
 			if (buildNo > highestSeenBuild) {
-				if (Logger.shouldLog(Logger.MINOR, Version.class)) {
+				if (Logger.shouldLog(LogLevel.MINOR, Version.class)) {
 					Logger.minor(
 						Version.class,
 						"New highest seen build: " + buildNo);

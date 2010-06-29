@@ -28,6 +28,7 @@ import freenet.client.ArchiveManager.ARCHIVE_TYPE;
 import freenet.client.Metadata.SimpleManifestComposer;
 import freenet.keys.FreenetURI;
 import freenet.support.Logger;
+import freenet.support.Logger.LogLevel;
 import freenet.support.api.Bucket;
 import freenet.support.io.BucketTools;
 
@@ -76,6 +77,8 @@ public class ContainerInserter implements ClientPutState {
 	private final InsertContext ctx;
 	private final boolean reportMetadataOnly;
 	private final boolean dontCompress;
+	final byte[] forceCryptoKey;
+	final byte cryptoAlgorithm;
 
 	/**
 	 * Insert a bunch of files as single Archive with .metadata
@@ -102,7 +105,9 @@ public class ContainerInserter implements ClientPutState {
 			Object token2,
 			ARCHIVE_TYPE archiveType2,
 			boolean freeData,
-			boolean earlyEncode2) {
+			boolean earlyEncode2,
+			byte[] forceCryptoKey,
+			byte cryptoAlgorithm) {
 		parent = parent2;
 		cb = cb2;
 		hashCode = super.hashCode();
@@ -117,6 +122,8 @@ public class ContainerInserter implements ClientPutState {
 		dontCompress = dontCompress2;
 		reportMetadataOnly = reportMetadataOnly2;
 		containerItems = new ArrayList<ContainerElement>();
+		this.forceCryptoKey = forceCryptoKey;
+		this.cryptoAlgorithm = cryptoAlgorithm;
 	}
 
 	public void cancel(ObjectContainer container, ClientContext context) {
@@ -185,7 +192,7 @@ public class ContainerInserter implements ClientPutState {
 		}
 		
 		// Treat it as a splitfile for purposes of determining reinsert count.
-		SingleFileInserter sfi = new SingleFileInserter(parent, cb, block, false, ctx, dc, getCHKOnly, reportMetadataOnly, token, archiveType, true, null, earlyEncode, true, persistent);
+		SingleFileInserter sfi = new SingleFileInserter(parent, cb, block, false, ctx, dc, getCHKOnly, reportMetadataOnly, token, archiveType, true, null, earlyEncode, true, persistent, 0, 0, null, cryptoAlgorithm, forceCryptoKey);
 		if(logMINOR)
 			Logger.minor(this, "Inserting container: "+sfi+" for "+this);
 		cb.onTransition(this, sfi, container);
@@ -349,7 +356,7 @@ public class ContainerInserter implements ClientPutState {
 				HashMap<String,Object> subMap = new HashMap<String,Object>();
 				//System.out.println("Decompose: "+name+" (SubDir)");
 				smc.addItem(name, makeManifest(hm, archivePrefix+name+ '/'));
-				if(Logger.shouldLog(Logger.DEBUG, this))
+				if(Logger.shouldLog(LogLevel.DEBUG, this))
 					Logger.debug(this, "Sub map for "+name+" : "+subMap.size()+" elements from "+hm.size());
 			} else if (o instanceof Metadata) {
 				//already Metadata, take it as is

@@ -27,6 +27,7 @@ import freenet.support.RandomGrabArray;
 import freenet.support.SectoredRandomGrabArrayWithInt;
 import freenet.support.SectoredRandomGrabArrayWithObject;
 import freenet.support.SortedVectorByNumber;
+import freenet.support.Logger.LogLevel;
 
 /**
  * Base class for ClientRequestSchedulerCore and ClientRequestSchedulerNonPersistent, 
@@ -44,7 +45,7 @@ abstract class ClientRequestSchedulerBase {
 			
 			@Override
 			public void shouldUpdate() {
-				logMINOR = Logger.shouldLog(Logger.MINOR, this);
+				logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 			}
 		});
 	}

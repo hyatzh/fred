@@ -18,6 +18,7 @@ import freenet.io.WritableToDataOutputStream;
 import freenet.support.Fields;
 import freenet.support.Logger;
 import freenet.support.SimpleReadOnlyArrayBucket;
+import freenet.support.Logger.LogLevel;
 import freenet.support.api.Bucket;
 import freenet.support.api.BucketFactory;
 import freenet.support.compress.CompressionOutputSizeException;
@@ -152,7 +153,7 @@ public abstract class Key implements WritableToDataOutputStream, Comparable<Key>
 	    if(maxLength < 0)
 		    throw new IllegalArgumentException("maxlength="+maxLength);
         if(isCompressed) {
-        	if(Logger.shouldLog(Logger.MINOR, Key.class))
+        	if(Logger.shouldLog(LogLevel.MINOR, Key.class))
         		Logger.minor(Key.class, "Decompressing "+output.length+" bytes in decode with codec "+compressionAlgorithm);
             if(output.length < (shortLength ? 3 : 5)) throw new CHKDecodeException("No bytes to decompress");
             // Decompress
@@ -187,8 +188,24 @@ public abstract class Key implements WritableToDataOutputStream, Comparable<Key>
 		byte[] compressedData;
     	short compressionAlgorithm;
     }
-    
-    static Compressed compress(Bucket sourceData, boolean dontCompress, short alreadyCompressedCodec, long sourceLength, long MAX_LENGTH_BEFORE_COMPRESSION, int MAX_COMPRESSED_DATA_LENGTH, boolean shortLength, String compressordescriptor) throws KeyEncodeException, IOException, InvalidCompressionCodecException {
+
+    /**
+     * Compress data.
+     * @param sourceData
+     * @param dontCompress
+     * @param alreadyCompressedCodec
+     * @param sourceLength
+     * @param MAX_LENGTH_BEFORE_COMPRESSION
+     * @param MAX_COMPRESSED_DATA_LENGTH
+     * @param shortLength
+     * @param compressordescriptor
+     * @param pre1254 If this is set, use OldLZMA not NewLZMA.
+     * @return
+     * @throws KeyEncodeException
+     * @throws IOException
+     * @throws InvalidCompressionCodecException
+     */
+    static Compressed compress(Bucket sourceData, boolean dontCompress, short alreadyCompressedCodec, long sourceLength, long MAX_LENGTH_BEFORE_COMPRESSION, int MAX_COMPRESSED_DATA_LENGTH, boolean shortLength, String compressordescriptor, boolean pre1254) throws KeyEncodeException, IOException, InvalidCompressionCodecException {
     	byte[] finalData = null;
         short compressionAlgorithm = -1;
         int maxCompressedDataLength = MAX_COMPRESSED_DATA_LENGTH;
@@ -210,7 +227,7 @@ public abstract class Key implements WritableToDataOutputStream, Comparable<Key>
         	} else {
         		if (sourceData.size() > maxCompressedDataLength) {
 					// Determine the best algorithm
-        			COMPRESSOR_TYPE[] comps = COMPRESSOR_TYPE.getCompressorsArray(compressordescriptor);
+        			COMPRESSOR_TYPE[] comps = COMPRESSOR_TYPE.getCompressorsArray(compressordescriptor, pre1254);
 					for (COMPRESSOR_TYPE comp : comps) {
 						ArrayBucket compressedData;
 						try {

@@ -4,6 +4,8 @@
 package freenet.support.compress;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.Vector;
 
 import com.db4o.ObjectContainer;
@@ -24,7 +26,8 @@ public interface Compressor {
 		// They will be tried in order: put the less resource consuming first
 		GZIP("GZIP", new GzipCompressor(), (short) 0),
 		BZIP2("BZIP2", new Bzip2Compressor(), (short) 1),
-		LZMA("LZMA", new LZMACompressor(), (short)2);
+		LZMA_OLD("LZMA_OLD", new OldLZMACompressor(), (short)2),
+		LZMA_NEW("LZMA_NEW", new NewLZMACompressor(), (short)3);
 
 		public final String name;
 		public final Compressor compressor;
@@ -90,10 +93,19 @@ public interface Compressor {
 		 * @return
 		 * @throws InvalidCompressionCodecException 
 		 */
-		public static COMPRESSOR_TYPE[] getCompressorsArray(String compressordescriptor) throws InvalidCompressionCodecException {
+		public static COMPRESSOR_TYPE[] getCompressorsArray(String compressordescriptor, boolean pre1254) throws InvalidCompressionCodecException {
 			COMPRESSOR_TYPE[] result = getCompressorsArrayNoDefault(compressordescriptor);
-			if (result == null)
-				return COMPRESSOR_TYPE.values();
+			if (result == null) {
+				COMPRESSOR_TYPE[] val = COMPRESSOR_TYPE.values();
+				COMPRESSOR_TYPE[] ret = new COMPRESSOR_TYPE[val.length-1];
+				int x = 0;
+				for(int i=0;i<val.length;i++) {
+					if((val[i] == LZMA_OLD) && !pre1254) continue;
+					if((val[i] == LZMA_NEW) && pre1254) continue;
+					ret[x++] = val[i];
+				}
+				result = ret;
+			}
 			return result;
 		}
 
@@ -132,6 +144,14 @@ public interface Compressor {
 			return compressor.compress(data, bf, maxReadLength, maxWriteLength);
 		}
 
+		public long compress(InputStream is, OutputStream os, long maxReadLength, long maxWriteLength) throws IOException, CompressionOutputSizeException {
+			if(compressor == null) {
+				// DB4O VOODOO! See below.
+				if(name != null) return getOfficial().compress(is, os, maxReadLength, maxWriteLength);
+			}
+			return compressor.compress(is, os, maxReadLength, maxWriteLength);
+		}
+
 		public Bucket decompress(Bucket data, BucketFactory bucketFactory, long maxLength, long maxEstimateSizeLength, Bucket preferred) throws IOException, CompressionOutputSizeException {
 			if(compressor == null) {
 				// DB4O VOODOO! See below.
@@ -147,6 +167,13 @@ public interface Compressor {
 			}
 			return compressor.decompress(dbuf, i, j, output);
 		}
+		
+		public long decompress(InputStream is, OutputStream os, long maxReadLength, long maxWriteLength) throws IOException, CompressionOutputSizeException {
+			if(compressor == null) {
+				if(name != null) return getOfficial().decompress(is, os, maxReadLength, maxWriteLength);
+			}
+			return compressor.decompress(is, os, maxReadLength, maxWriteLength);
+		}
 
 		// DB4O VOODOO!
 		// Copies of the static fields get stored into the database.
@@ -155,7 +182,9 @@ public interface Compressor {
 		private Compressor getOfficial() {
 			if(name.equals("GZIP")) return GZIP;
 			if(name.equals("BZIP2")) return BZIP2;
-			if(name.equals("LZMA")) return LZMA;
+			if(name.equals("LZMA_OLD")) return LZMA_OLD;
+			if(name.equals("LZMA_NEW")) return LZMA_NEW;
+			if(name.equals("LZMA")) return LZMA_NEW;
 			return null;
 		}
 
@@ -172,7 +201,7 @@ public interface Compressor {
 		}
 
 		public boolean isOfficial() {
-			return this == GZIP || this == BZIP2 || this == LZMA;
+			return this == GZIP || this == BZIP2 || this == LZMA_OLD || this == LZMA_NEW;
 		}
 
 		public static int countCompressors() {
@@ -192,6 +221,20 @@ public interface Compressor {
 	 * @throws CompressionOutputSizeException If the compressed data is larger than maxWriteLength. 
 	 */
 	public abstract Bucket compress(Bucket data, BucketFactory bf, long maxReadLength, long maxWriteLength) throws IOException, CompressionOutputSizeException;
+
+	public abstract long decompress(InputStream is, OutputStream os, long maxReadLength, long maxWriteLength) throws IOException, CompressionOutputSizeException;
+
+	/**
+	 * Compress the data.
+	 * @param input The InputStream to read from.
+	 * @param output The OutputStream to write to.
+	 * @param maxReadLength The maximum number of bytes to read from the input bucket.
+	 * @param maxWriteLength The maximum number of bytes to write to the output bucket. If this is exceeded, throw a CompressionOutputSizeException.
+	 * @return The compressed data.
+	 * @throws IOException If an error occurs reading or writing data.
+	 * @throws CompressionOutputSizeException If the compressed data is larger than maxWriteLength. 
+	 */
+	public abstract long compress(InputStream input, OutputStream output, long maxReadLength, long maxWriteLength) throws IOException, CompressionOutputSizeException;
 
 	/**
 	 * Decompress data.

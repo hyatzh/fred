@@ -27,6 +27,7 @@ import freenet.support.Fields;
 import freenet.support.HTMLNode;
 import freenet.support.Logger;
 import freenet.support.SizeUtil;
+import freenet.support.Logger.LogLevel;
 import freenet.support.api.HTTPRequest;
 import freenet.support.io.FileUtil;
 
@@ -113,17 +114,33 @@ public class FirstTimeWizardToadlet extends Toadlet {
 			HTMLNode infoboxContent = infobox.addChild("div", "class", "infobox-content");
 
 			infoboxHeader.addChild("#", l10nSec("networkThreatLevelShort"));
-			infoboxContent.addChild("p", l10nSec("networkThreatLevel"));
+			//infoboxContent.addChild("p", l10nSec("networkThreatLevel"));
+			infoboxContent.addChild("p", l10nSec("networkThreatLevel.opennetIntro"));
 			HTMLNode form = ctx.addFormChild(infoboxContent, ".", "networkSecurityForm");
-			HTMLNode div = form.addChild("div", "class", "opennetDiv");
 			String controlName = "security-levels.networkThreatLevel";
-			for(NETWORK_THREAT_LEVEL level : NETWORK_THREAT_LEVEL.values()) {
+			HTMLNode p = form.addChild("p");
+			p.addChild("b", l10nSec("networkThreatLevel.opennetLabel"));
+			p.addChild("#", ": "+l10nSec("networkThreatLevel.opennetExplain"));
+			HTMLNode div = form.addChild("div", "class", "opennetDiv");
+			for(NETWORK_THREAT_LEVEL level : NETWORK_THREAT_LEVEL.OPENNET_VALUES) {
 				HTMLNode input;
 				input = div.addChild("p").addChild("input", new String[] { "type", "name", "value" }, new String[] { "radio", controlName, level.name() });
 				input.addChild("b", l10nSec("networkThreatLevel.name."+level));
 				input.addChild("#", ": ");
 				NodeL10n.getBase().addL10nSubstitution(input, "SecurityLevels.networkThreatLevel.choice."+level, new String[] { "bold", "/bold" }, new String[] { "<b>", "</b>" });
 			}
+			p = form.addChild("p");
+			p.addChild("b", l10nSec("networkThreatLevel.darknetLabel"));
+			p.addChild("#", ": "+l10nSec("networkThreatLevel.darknetExplain"));
+			div = form.addChild("div", "class", "darknetDiv");
+			for(NETWORK_THREAT_LEVEL level : NETWORK_THREAT_LEVEL.DARKNET_VALUES) {
+				HTMLNode input;
+				input = div.addChild("p").addChild("input", new String[] { "type", "name", "value" }, new String[] { "radio", controlName, level.name() });
+				input.addChild("b", l10nSec("networkThreatLevel.name."+level));
+				input.addChild("#", ": ");
+				NodeL10n.getBase().addL10nSubstitution(input, "SecurityLevels.networkThreatLevel.choice."+level, new String[] { "bold", "/bold" }, new String[] { "<b>", "</b>" });
+			}
+			form.addChild("p").addChild("b", l10nSec("networkThreatLevel.opennetFriendsWarning"));
 			form.addChild("input", new String[] { "type", "name", "value" }, new String[] { "submit", "networkSecurityF", NodeL10n.getBase().getString("FirstTimeWizardToadlet.continue")});
 			form.addChild("input", new String[] { "type", "name", "value" }, new String[] { "submit", "cancel", NodeL10n.getBase().getString("Toadlet.cancel")});
 			this.writeHTMLReply(ctx, 200, "OK", pageNode.generate());
@@ -394,7 +411,7 @@ public class FirstTimeWizardToadlet extends Toadlet {
 		String passwd = request.getPartAsString("formPassword", 32);
 		boolean noPassword = (passwd == null) || !passwd.equals(core.formPassword);
 		if(noPassword) {
-			if(Logger.shouldLog(Logger.MINOR, this)) Logger.minor(this, "No password ("+passwd+" should be "+core.formPassword+ ')');
+			if(Logger.shouldLog(LogLevel.MINOR, this)) Logger.minor(this, "No password ("+passwd+" should be "+core.formPassword+ ')');
 			super.writeTemporaryRedirect(ctx, "invalid/unhandled data", "/");
 			return;
 		}
@@ -494,7 +511,7 @@ public class FirstTimeWizardToadlet extends Toadlet {
 			String physicalThreatLevel = request.getPartAsString("security-levels.physicalThreatLevel", 128);
 			PHYSICAL_THREAT_LEVEL oldThreatLevel = core.node.securityLevels.getPhysicalThreatLevel();
 			PHYSICAL_THREAT_LEVEL newThreatLevel = SecurityLevels.parsePhysicalThreatLevel(physicalThreatLevel);
-			if(Logger.shouldLog(Logger.MINOR, this)) Logger.minor(this, "Old threat level: "+oldThreatLevel+" new threat level: "+newThreatLevel);
+			if(Logger.shouldLog(LogLevel.MINOR, this)) Logger.minor(this, "Old threat level: "+oldThreatLevel+" new threat level: "+newThreatLevel);
 			if(newThreatLevel == null) {
 				super.writeTemporaryRedirect(ctx, "step1", TOADLET_URL+"?step="+WIZARD_STEP.SECURITY_PHYSICAL);
 				return;

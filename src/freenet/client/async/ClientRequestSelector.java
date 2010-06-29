@@ -24,6 +24,7 @@ import freenet.support.RandomGrabArray;
 import freenet.support.SectoredRandomGrabArrayWithInt;
 import freenet.support.SectoredRandomGrabArrayWithObject;
 import freenet.support.SortedVectorByNumber;
+import freenet.support.Logger.LogLevel;
 
 /** Chooses requests from both CRSCore and CRSNP */
 class ClientRequestSelector implements KeysFetchingLocally {
@@ -52,7 +53,7 @@ class ClientRequestSelector implements KeysFetchingLocally {
 			
 			@Override
 			public void shouldUpdate() {
-				logMINOR = Logger.shouldLog(Logger.MINOR, this);
+				logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 			}
 		});
 	}
@@ -136,13 +137,18 @@ class ClientRequestSelector implements KeysFetchingLocally {
 	// thread removes it cos its empty) ... and in addToGrabArray etc we already sync on this.
 	// The worry is ... is there any nested locking outside of the hierarchy?
 	ChosenBlock removeFirstTransient(int fuzz, RandomSource random, OfferedKeysList offeredKeys, RequestStarter starter, ClientRequestSchedulerNonPersistent schedTransient, short maxPrio, int retryCount, ClientContext context, ObjectContainer container) {
-		SendableRequest req = removeFirstInner(fuzz, random, offeredKeys, starter, null, schedTransient, true, false, maxPrio, retryCount, context, container);
-		if(isInsertScheduler && req instanceof SendableGet) {
-			IllegalStateException e = new IllegalStateException("removeFirstInner returned a SendableGet on an insert scheduler!!");
-			req.internalError(e, sched, container, context, req.persistent());
-			throw e;
+		// If a block is already running it will return null. Try to find a valid block in that case.
+		for(int i=0;i<5;i++) {
+			SendableRequest req = removeFirstInner(fuzz, random, offeredKeys, starter, null, schedTransient, true, false, maxPrio, retryCount, context, container);
+			if(isInsertScheduler && req instanceof SendableGet) {
+				IllegalStateException e = new IllegalStateException("removeFirstInner returned a SendableGet on an insert scheduler!!");
+				req.internalError(e, sched, container, context, req.persistent());
+				throw e;
+			}
+			ChosenBlock block = maybeMakeChosenRequest(req, container, context);
+			if(block != null) return block;
 		}
-		return maybeMakeChosenRequest(req, container, context);
+		return null;
 	}
 	
 	private int ctr;
@@ -186,9 +192,11 @@ class ClientRequestSelector implements KeysFetchingLocally {
 				if(req instanceof SendableInsert) {
 					canWriteClientCache = ((SendableInsert)req).canWriteClientCache(null);
 					forkOnCacheable = ((SendableInsert)req).forkOnCacheable(null);
+					localRequestOnly = ((SendableInsert)req).localRequestOnly(null);
 				} else {
 					canWriteClientCache = false;
 					forkOnCacheable = Node.FORK_ON_CACHEABLE_DEFAULT;
+					localRequestOnly = false;
 				}
 				ignoreStore = false;
 			}

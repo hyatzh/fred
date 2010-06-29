@@ -1,6 +1,9 @@
 package freenet.client.async;
 
 import java.util.ArrayList;
+import java.util.Random;
+
+import org.spaceroots.mantissa.random.MersenneTwister;
 
 import com.db4o.ObjectContainer;
 import com.db4o.ObjectSet;
@@ -16,6 +19,7 @@ import freenet.node.SendableGet;
 import freenet.support.Executor;
 import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
+import freenet.support.Logger.LogLevel;
 import freenet.support.io.NativeThread;
 
 /**
@@ -23,6 +27,12 @@ import freenet.support.io.NativeThread;
  */
 public class DatastoreChecker implements PrioRunnable {
 
+	// Setting these to 1, 3 kills 1/3rd of datastore checks.
+	// 2, 5 gives 40% etc.
+	// In normal operation KILL_BLOCKS should be 0 !!!!
+	static final int KILL_BLOCKS = 0;
+	static final int RESET_COUNTER = 100;
+	
 	private static volatile boolean logMINOR;
 
 	static {
@@ -30,7 +40,7 @@ public class DatastoreChecker implements PrioRunnable {
 
 			@Override
 			public void shouldUpdate() {
-				logMINOR = Logger.shouldLog(Logger.MINOR, this);
+				logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 			}
 		});
 	}
@@ -327,6 +337,11 @@ public class DatastoreChecker implements PrioRunnable {
 	}
 
 	private void realRun() {
+		Random random;
+		if(KILL_BLOCKS != 0)
+			random = new MersenneTwister();
+		else
+			random = null;
 		Key[] keys = null;
 		SendableGet getter = null;
 		boolean persistent = false;
@@ -390,6 +405,12 @@ public class DatastoreChecker implements PrioRunnable {
 		}
 		boolean anyValid = false;
 		for(Key key : keys) {
+			if(random != null) {
+				if(random.nextInt(RESET_COUNTER) < KILL_BLOCKS) {
+					anyValid = true;
+					continue;
+				}
+			}
 			KeyBlock block = null;
 			if(blocks != null)
 				block = blocks.get(key);

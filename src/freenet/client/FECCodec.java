@@ -12,7 +12,9 @@ import com.onionnetworks.fec.FECCode;
 import com.onionnetworks.fec.Native8Code;
 import com.onionnetworks.util.Buffer;
 
+import freenet.client.InsertContext.CompatibilityMode;
 import freenet.support.Logger;
+import freenet.support.Logger.LogLevel;
 import freenet.support.api.Bucket;
 import freenet.support.api.BucketFactory;
 import freenet.support.io.Closer;
@@ -47,7 +49,7 @@ public abstract class FECCodec {
 	 * of check blocks, and the codec type. Normally for decoding.
 	 */
 	public static FECCodec getCodec(short splitfileType, int dataBlocks, int checkBlocks) {
-		if(Logger.shouldLog(Logger.MINOR, FECCodec.class))
+		if(Logger.shouldLog(LogLevel.MINOR, FECCodec.class))
 			Logger.minor(FECCodec.class, "getCodec: splitfileType="+splitfileType+" dataBlocks="+dataBlocks+" checkBlocks="+checkBlocks);
 		if(splitfileType == Metadata.SPLITFILE_NONREDUNDANT)
 			return null;
@@ -61,7 +63,7 @@ public abstract class FECCodec {
 	 * Get a codec where we know only the number of data blocks and the codec
 	 * type. Normally for encoding.
 	 */
-	public static FECCodec getCodec(short splitfileType, int dataBlocks, long compatibilityMode) {
+	public static FECCodec getCodec(short splitfileType, int dataBlocks, CompatibilityMode compatibilityMode) {
 		if(splitfileType == Metadata.SPLITFILE_NONREDUNDANT)
 			return null;
 		if(splitfileType == Metadata.SPLITFILE_ONION_STANDARD) {
@@ -72,7 +74,7 @@ public abstract class FECCodec {
 			return null;
 	}
 	
-	private static int standardOnionCheckBlocks(int dataBlocks, long compatibilityMode) {
+	private static int standardOnionCheckBlocks(int dataBlocks, CompatibilityMode compatibilityMode) {
 		/**
 		 * ALCHEMY: What we do know is that redundancy by FEC is much more efficient than 
 		 * redundancy by simply duplicating blocks, for obvious reasons (see e.g. Wuala). But
@@ -90,7 +92,7 @@ public abstract class FECCodec {
 		// Keep it within 256 blocks.
 		if(dataBlocks < 256 && dataBlocks + checkBlocks > 256)
 			checkBlocks = 256 - dataBlocks;
-		if(compatibilityMode == InsertContext.COMPAT_1250) {
+		if(compatibilityMode == InsertContext.CompatibilityMode.COMPAT_1250 || compatibilityMode == InsertContext.CompatibilityMode.COMPAT_1250_EXACT) {
 			// Pre-1250, redundancy was always 100% or less.
 			// Builds of that period using the native FEC (ext #26) will segfault sometimes on >100% redundancy.
 			// So limit check blocks to data blocks.
@@ -99,7 +101,7 @@ public abstract class FECCodec {
 		return checkBlocks;
 	}
 
-	public static int getCheckBlocks(short splitfileType, int dataBlocks, long compatibilityMode) {
+	public static int getCheckBlocks(short splitfileType, int dataBlocks, CompatibilityMode compatibilityMode) {
 		if(splitfileType == Metadata.SPLITFILE_ONION_STANDARD) {
 			return standardOnionCheckBlocks(dataBlocks, compatibilityMode);
 		} else
@@ -113,7 +115,7 @@ public abstract class FECCodec {
 
 	protected void realDecode(SplitfileBlock[] dataBlockStatus, SplitfileBlock[] checkBlockStatus, int blockLength, BucketFactory bf) throws IOException {
 		loadFEC();
-		logMINOR = Logger.shouldLog(Logger.MINOR, this);
+		logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 		if(logMINOR)
 			Logger.minor(this, "Doing decode: " + dataBlockStatus.length + " data blocks, " + checkBlockStatus.length + " check blocks, block length " + blockLength + " with " + this, new Exception("debug"));
 		if(dataBlockStatus.length + checkBlockStatus.length != n)
@@ -248,7 +250,7 @@ public abstract class FECCodec {
 		throws IOException {
 		if(bf == null) throw new NullPointerException();
 		loadFEC();
-		logMINOR = Logger.shouldLog(Logger.MINOR, this);
+		logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 		//		Runtime.getRuntime().gc();
 //		Runtime.getRuntime().runFinalization();
 //		Runtime.getRuntime().gc();

@@ -10,10 +10,12 @@ import java.net.MalformedURLException;
 import com.db4o.ObjectContainer;
 
 import freenet.client.HighLevelSimpleClientImpl;
+import freenet.client.InsertContext;
 import freenet.keys.FreenetURI;
 import freenet.node.Node;
 import freenet.node.RequestStarter;
 import freenet.support.Fields;
+import freenet.support.HexUtil;
 import freenet.support.SimpleFieldSet;
 import freenet.support.api.Bucket;
 import freenet.support.api.BucketFactory;
@@ -75,7 +77,9 @@ public class ClientPutMessage extends DataCarryingMessage {
 	final boolean forkOnCacheable;
 	final int extraInsertsSingleBlock;
 	final int extraInsertsSplitfileHeaderBlock;
-	final long compatibilityMode;
+	final InsertContext.CompatibilityMode compatibilityMode;
+	final byte[] overrideSplitfileCryptoKey;
+	final boolean localRequestOnly;
 	
 	public static final short UPLOAD_FROM_DIRECT = 0;
 	public static final short UPLOAD_FROM_DISK = 1;
@@ -86,7 +90,36 @@ public class ClientPutMessage extends DataCarryingMessage {
 		identifier = fs.get("Identifier");
 		binaryBlob = fs.getBoolean("BinaryBlob", false);
 		global = Fields.stringToBool(fs.get("Global"), false);
-		compatibilityMode = fs.getLong("CompatibilityMode", 0);
+		localRequestOnly = fs.getBoolean("LocalRequestOnly", false);
+		String s = fs.get("CompatibilityMode");
+		InsertContext.CompatibilityMode cmode = null;
+		if(s == null)
+			cmode = InsertContext.CompatibilityMode.COMPAT_CURRENT;
+		else {
+			try {
+				cmode = InsertContext.CompatibilityMode.valueOf(s);
+			} catch (IllegalArgumentException e) {
+				try {
+					cmode = InsertContext.CompatibilityMode.values()[Integer.parseInt(s)];
+				} catch (NumberFormatException e1) {
+					throw new MessageInvalidException(ProtocolErrorMessage.INVALID_FIELD, "Invalid CompatibilityMode (not a name and not a number)", identifier, global);
+				} catch (ArrayIndexOutOfBoundsException e1) {
+					throw new MessageInvalidException(ProtocolErrorMessage.INVALID_FIELD, "Invalid CompatibilityMode (not a valid number)", identifier, global);
+				}
+			}
+		}
+		compatibilityMode = cmode;
+		s = fs.get("OverrideSplitfileCryptoKey");
+		if(s == null)
+			overrideSplitfileCryptoKey = null;
+		else
+			try {
+				overrideSplitfileCryptoKey = HexUtil.hexToBytes(s);
+			} catch (NumberFormatException e1) {
+				throw new MessageInvalidException(ProtocolErrorMessage.INVALID_FIELD, "Invalid splitfile crypto key (not hex)", identifier, global);
+			} catch (IndexOutOfBoundsException e1) {
+				throw new MessageInvalidException(ProtocolErrorMessage.INVALID_FIELD, "Invalid splitfile crypto key (too short)", identifier, global);
+			}
 		if(identifier == null)
 			throw new MessageInvalidException(ProtocolErrorMessage.MISSING_FIELD, "No Identifier", null, global);
 		try {
@@ -214,7 +247,7 @@ public class ClientPutMessage extends DataCarryingMessage {
 		if(fnam != null && fnam.length() == 0) {
 			fnam = null; // Deliberate override to tell us not to create one.
 		}
-		if(uri.getKeyType().equals("CHK"))
+		if(uri.getRoutingKey() == null && !uri.isKSK())
 			targetFilename = fnam;
 		else
 			targetFilename = null;

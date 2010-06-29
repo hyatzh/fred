@@ -29,6 +29,7 @@ import freenet.node.RequestClient;
 import freenet.node.RequestScheduler;
 import freenet.node.RequestStarter;
 import freenet.support.Logger;
+import freenet.support.Logger.LogLevel;
 import freenet.support.api.Bucket;
 import freenet.support.api.BucketFactory;
 import freenet.support.compress.Compressor;
@@ -82,9 +83,9 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 	static final int MAX_SPLITFILE_CHECK_BLOCKS_PER_SEGMENT = 1536;
 	// For scaling purposes, 128 data 128 check blocks i.e. one check block per data block.
 	public static final int SPLITFILE_SCALING_BLOCKS_PER_SEGMENT = 128;
-	/* We can go down to 131 data 125 check if it avoids creating a new segment.
+	/* The number of data blocks in a segment depends on how many segments there are.
 	 * FECCodec.standardOnionCheckBlocks will automatically reduce check blocks to compensate for more than half data blocks. */
-	public static final int SPLITFILE_BLOCKS_PER_SEGMENT = 131;
+	public static final int SPLITFILE_BLOCKS_PER_SEGMENT = 136;
 	public static final int SPLITFILE_CHECK_BLOCKS_PER_SEGMENT = 128;
 	public static final int EXTRA_INSERTS_SINGLE_BLOCK = 0;
 	public static final int EXTRA_INSERTS_SPLITFILE_HEADER = 2;
@@ -98,7 +99,7 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 		this.persistentFileTracker = node.persistentTempBucketFactory;
 		random = r;
 		this.eventProducer = new SimpleEventProducer();
-		eventProducer.addEventListener(new EventLogger(Logger.MINOR, false));
+		eventProducer.addEventListener(new EventLogger(LogLevel.MINOR, false));
 		curMaxLength = Long.MAX_VALUE;
 		curMaxTempLength = Long.MAX_VALUE;
 		curMaxMetadataLength = 1024 * 1024;
@@ -204,7 +205,7 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 		PutWaiter pw = new PutWaiter();
 		ClientPutter put = new ClientPutter(pw, insert.getData(), insert.desiredURI, insert.clientMetadata,
 				context, priority,
-				getCHKOnly, isMetadata, this, null, filenameHint, false);
+				getCHKOnly, isMetadata, this, null, filenameHint, false, core.clientContext, null);
 		try {
 			core.clientContext.start(put, false);
 		} catch (DatabaseDisabledException e) {
@@ -220,7 +221,7 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 	public ClientPutter insert(InsertBlock insert, boolean getCHKOnly, String filenameHint, boolean isMetadata, InsertContext ctx, ClientPutCallback cb, short priority) throws InsertException {
 		ClientPutter put = new ClientPutter(cb, insert.getData(), insert.desiredURI, insert.clientMetadata,
 				ctx, priority,
-				getCHKOnly, isMetadata, this, null, filenameHint, false);
+				getCHKOnly, isMetadata, this, null, filenameHint, false, core.clientContext, null);
 		try {
 			core.clientContext.start(put, false);
 		} catch (DatabaseDisabledException e) {
@@ -249,7 +250,7 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 	public FreenetURI insertManifest(FreenetURI insertURI, HashMap<String, Object> bucketsByName, String defaultName) throws InsertException {
 		PutWaiter pw = new PutWaiter();
 		SimpleManifestPutter putter =
-			new SimpleManifestPutter(pw, SimpleManifestPutter.bucketsByNameToManifestEntries(bucketsByName), priorityClass, insertURI, defaultName, getInsertContext(true), false, this, false);
+			new SimpleManifestPutter(pw, SimpleManifestPutter.bucketsByNameToManifestEntries(bucketsByName), priorityClass, insertURI, defaultName, getInsertContext(true), false, this, false, false, null, core.clientContext);
 		try {
 			core.clientContext.start(putter);
 		} catch (DatabaseDisabledException e) {
@@ -287,7 +288,7 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 		return new InsertContext(
 				INSERT_RETRIES, CONSECUTIVE_RNFS_ASSUME_SUCCESS,
 				SPLITFILE_BLOCKS_PER_SEGMENT, SPLITFILE_CHECK_BLOCKS_PER_SEGMENT,
-				eventProducer, CAN_WRITE_CLIENT_CACHE_INSERTS, Node.FORK_ON_CACHEABLE_DEFAULT, Compressor.DEFAULT_COMPRESSORDESCRIPTOR, EXTRA_INSERTS_SINGLE_BLOCK, EXTRA_INSERTS_SPLITFILE_HEADER, 0);
+				eventProducer, CAN_WRITE_CLIENT_CACHE_INSERTS, Node.FORK_ON_CACHEABLE_DEFAULT, false, Compressor.DEFAULT_COMPRESSORDESCRIPTOR, EXTRA_INSERTS_SINGLE_BLOCK, EXTRA_INSERTS_SPLITFILE_HEADER, InsertContext.CompatibilityMode.COMPAT_CURRENT);
 	}
 
 	public FreenetURI[] generateKeyPair(String docName) {

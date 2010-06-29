@@ -12,8 +12,11 @@ import java.net.MalformedURLException;
 import java.security.MessageDigest;
 import java.util.Arrays;
 
+import com.db4o.ObjectContainer;
+
 import freenet.client.ClientMetadata;
 import freenet.client.DefaultMIMETypes;
+import freenet.client.InsertContext;
 import freenet.client.InsertException;
 import freenet.client.Metadata;
 import freenet.client.MetadataUnresolvedException;
@@ -27,12 +30,11 @@ import freenet.support.IllegalBase64Exception;
 import freenet.support.Logger;
 import freenet.support.SimpleFieldSet;
 import freenet.support.SimpleReadOnlyArrayBucket;
+import freenet.support.Logger.LogLevel;
 import freenet.support.api.Bucket;
 import freenet.support.io.CannotCreateFromFieldSetException;
 import freenet.support.io.FileBucket;
 import freenet.support.io.SerializableToFieldSetBucketUtil;
-
-import com.db4o.ObjectContainer;
 
 public class ClientPut extends ClientPutBase {
 
@@ -102,8 +104,8 @@ public class ClientPut extends ClientPutBase {
 	public ClientPut(FCPClient globalClient, FreenetURI uri, String identifier, int verbosity, 
 			String charset, short priorityClass, short persistenceType, String clientToken,
 			boolean getCHKOnly, boolean dontCompress, int maxRetries, short uploadFromType, File origFilename,
-			String contentType, Bucket data, FreenetURI redirectTarget, String targetFilename, boolean earlyEncode, boolean canWriteClientCache, boolean forkOnCacheable, int extraInsertsSingleBlock, int extraInsertsSplitfileHeaderBlock, FCPServer server, ObjectContainer container) throws IdentifierCollisionException, NotAllowedException, FileNotFoundException, MalformedURLException, MetadataUnresolvedException {
-		super(uri, identifier, verbosity, charset, null, globalClient, priorityClass, persistenceType, null, true, getCHKOnly, dontCompress, maxRetries, earlyEncode, canWriteClientCache, forkOnCacheable, extraInsertsSingleBlock, extraInsertsSplitfileHeaderBlock, null, server, container);
+			String contentType, Bucket data, FreenetURI redirectTarget, String targetFilename, boolean earlyEncode, boolean canWriteClientCache, boolean forkOnCacheable, int extraInsertsSingleBlock, int extraInsertsSplitfileHeaderBlock, InsertContext.CompatibilityMode compatMode, byte[] overrideSplitfileKey, FCPServer server, ObjectContainer container) throws IdentifierCollisionException, NotAllowedException, FileNotFoundException, MalformedURLException, MetadataUnresolvedException {
+		super(uri = checkEmptySSK(uri, targetFilename, server.core.clientContext), identifier, verbosity, charset, null, globalClient, priorityClass, persistenceType, null, true, getCHKOnly, dontCompress, maxRetries, earlyEncode, canWriteClientCache, forkOnCacheable, false, extraInsertsSingleBlock, extraInsertsSplitfileHeaderBlock, null, compatMode, server, container);
 		if(uploadFromType == ClientPutMessage.UPLOAD_FROM_DISK) {
 			if(!server.core.allowUploadFrom(origFilename))
 				throw new NotAllowedException();
@@ -111,7 +113,7 @@ public class ClientPut extends ClientPutBase {
 				throw new FileNotFoundException();
 		}
 
-		logMINOR = Logger.shouldLog(Logger.MINOR, this);
+		logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 		binaryBlob = false;
 		this.targetFilename = targetFilename;
 		this.uploadFrom = uploadFromType;
@@ -122,7 +124,7 @@ public class ClientPut extends ClientPutBase {
 		Bucket tempData = data;
 		ClientMetadata cm = new ClientMetadata(mimeType);
 		boolean isMetadata = false;
-		logMINOR = Logger.shouldLog(Logger.MINOR, this);
+		logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 		if(logMINOR) Logger.minor(this, "data = "+tempData+", uploadFrom = "+ClientPutMessage.uploadFromString(uploadFrom));
 		if(uploadFrom == ClientPutMessage.UPLOAD_FROM_REDIRECT) {
 			this.targetURI = redirectTarget;
@@ -137,17 +139,17 @@ public class ClientPut extends ClientPutBase {
 		this.data = tempData;
 		this.clientMetadata = cm;
 
-		putter = new ClientPutter(this, data, uri, cm, 
+		putter = new ClientPutter(this, data, this.uri, cm, 
 				ctx, priorityClass, 
 				getCHKOnly, isMetadata, 
 				lowLevelClient,
-				null, targetFilename, binaryBlob);
+				null, this.uri.getDocName() == null ? targetFilename : null, binaryBlob, server.core.clientContext, overrideSplitfileKey);
 	}
 	
 	public ClientPut(FCPConnectionHandler handler, ClientPutMessage message, FCPServer server, ObjectContainer container) throws IdentifierCollisionException, MessageInvalidException, MalformedURLException {
-		super(message.uri, message.identifier, message.verbosity, null, 
+		super(checkEmptySSK(message.uri, message.targetFilename, server.core.clientContext), message.identifier, message.verbosity, null, 
 				handler, message.priorityClass, message.persistenceType, message.clientToken,
-				message.global, message.getCHKOnly, message.dontCompress, message.maxRetries, message.earlyEncode, message.canWriteClientCache, message.forkOnCacheable, message.compressorDescriptor, message.extraInsertsSingleBlock, message.extraInsertsSplitfileHeaderBlock, message.compatibilityMode, server, container);
+				message.global, message.getCHKOnly, message.dontCompress, message.localRequestOnly, message.maxRetries, message.earlyEncode, message.canWriteClientCache, message.forkOnCacheable, message.compressorDescriptor, message.extraInsertsSingleBlock, message.extraInsertsSplitfileHeaderBlock, message.compatibilityMode, server, container);
 		String salt = null;
 		byte[] saltedHash = null;
 		binaryBlob = message.binaryBlob;
@@ -159,16 +161,20 @@ public class ClientPut extends ClientPutBase {
 			if(message.fileHash != null) {
 				try {
 					salt = handler.connectionIdentifier + '-' + message.identifier + '-';
-					saltedHash = Base64.decode(message.fileHash);
+					saltedHash = Base64.decodeStandard(message.fileHash);
 				} catch (IllegalBase64Exception e) {
-					throw new MessageInvalidException(ProtocolErrorMessage.INVALID_FIELD, "Can't base64 decode " + ClientPutBase.FILE_HASH, identifier, global);
+					try {
+						saltedHash = Base64.decode(message.fileHash);
+					} catch (IllegalBase64Exception e1) {
+						throw new MessageInvalidException(ProtocolErrorMessage.INVALID_FIELD, "Can't base64 decode " + ClientPutBase.FILE_HASH, identifier, global);
+					}
 				}
 			} else if(!handler.allowDDAFrom(message.origFilename, false))
 				throw new MessageInvalidException(ProtocolErrorMessage.DIRECT_DISK_ACCESS_DENIED, "Not allowed to upload from "+message.origFilename+". Have you done a testDDA previously ?", identifier, global);		
 		}
 			
 		this.targetFilename = message.targetFilename;
-		logMINOR = Logger.shouldLog(Logger.MINOR, this);
+		logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 		this.uploadFrom = message.uploadFromType;
 		this.origFilename = message.origFilename;
 		// Now go through the fields one at a time
@@ -246,11 +252,11 @@ public class ClientPut extends ClientPutBase {
 		}
 		
 		if(logMINOR) Logger.minor(this, "data = "+data+", uploadFrom = "+ClientPutMessage.uploadFromString(uploadFrom));
-		putter = new ClientPutter(this, data, uri, cm, 
+		putter = new ClientPutter(this, data, this.uri, cm, 
 				ctx, priorityClass, 
 				getCHKOnly, isMetadata,
 				lowLevelClient,
-				null, targetFilename, binaryBlob);
+				null, this.uri.getDocName() == null ? targetFilename : null, binaryBlob, server.core.clientContext, message.overrideSplitfileCryptoKey);
 	}
 	
 	/**
@@ -263,7 +269,7 @@ public class ClientPut extends ClientPutBase {
 	 */
 	public ClientPut(SimpleFieldSet fs, FCPClient client2, FCPServer server, ObjectContainer container) throws PersistenceParseException, IOException, InsertException {
 		super(fs, client2, server);
-		logMINOR = Logger.shouldLog(Logger.MINOR, this);
+		logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 		String mimeType = fs.get("Metadata.ContentType");
 
 		String from = fs.get("UploadFrom");
@@ -302,7 +308,7 @@ public class ClientPut extends ClientPutBase {
 					throw new PersistenceParseException("Could not read old bucket for "+identifier+" : "+e, e);
 				}
 			} else {
-				if(Logger.shouldLog(Logger.MINOR, this)) 
+				if(Logger.shouldLog(LogLevel.MINOR, this)) 
 					Logger.minor(this, "Finished already so not reading bucket for "+this);
 				data = null;
 			}
@@ -335,10 +341,10 @@ public class ClientPut extends ClientPutBase {
 		this.clientMetadata = cm;
 		SimpleFieldSet oldProgress = fs.subset("progress");
 		if(finished) oldProgress = null; // Not useful any more
-		putter = new ClientPutter(this, data, uri, cm, ctx, 
+		putter = new ClientPutter(this, data, this.uri, cm, ctx, 
 				priorityClass, getCHKOnly, isMetadata,
 				lowLevelClient,
-				oldProgress, targetFilename, binaryBlob);
+				oldProgress, targetFilename, binaryBlob, server.core.clientContext, null);
 		if(persistenceType != PERSIST_CONNECTION) {
 			FCPMessage msg = persistentTagMessage(container);
 			client.queueClientRequestMessage(msg, 0, container);
@@ -358,7 +364,7 @@ public class ClientPut extends ClientPutBase {
 	
 	@Override
 	public void start(ObjectContainer container, ClientContext context) {
-		if(Logger.shouldLog(Logger.MINOR, this))
+		if(Logger.shouldLog(LogLevel.MINOR, this))
 			Logger.minor(this, "Starting "+this+" : "+identifier);
 		synchronized(this) {
 			if(finished) return;
@@ -414,10 +420,11 @@ public class ClientPut extends ClientPutBase {
 			container.activate(publicURI, 5);
 			container.activate(clientMetadata, 5);
 			container.activate(origFilename, 5);
+			container.activate(ctx, 1);
 		}
 		return new PersistentPut(identifier, publicURI, verbosity, priorityClass, uploadFrom, targetURI, 
 				persistenceType, origFilename, clientMetadata.getMIMEType(), client.isGlobalQueue,
-				getDataSize(container), clientToken, started, ctx.maxInsertRetries, targetFilename, binaryBlob);
+				getDataSize(container), clientToken, started, ctx.maxInsertRetries, targetFilename, binaryBlob, this.ctx.getCompatibilityMode());
 	}
 
 	@Override

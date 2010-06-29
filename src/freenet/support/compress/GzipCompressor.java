@@ -1,5 +1,6 @@
 package freenet.support.compress;
 
+import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -19,16 +20,28 @@ import freenet.support.io.CountedOutputStream;
 public class GzipCompressor implements Compressor {
 
 	public Bucket compress(Bucket data, BucketFactory bf, long maxReadLength, long maxWriteLength) throws IOException, CompressionOutputSizeException {
-		if(maxReadLength < 0)
-			throw new IllegalArgumentException();
 		Bucket output = bf.makeBucket(maxWriteLength);
 		InputStream is = null;
 		OutputStream os = null;
-		GZIPOutputStream gos = null;
 		try {
 			is = data.getInputStream();
-			os = new BufferedOutputStream(output.getOutputStream());
-			CountedOutputStream cos = new CountedOutputStream(os);
+			os = output.getOutputStream();
+			compress(is, os, maxReadLength, maxWriteLength);
+		} finally {
+			if(is != null) is.close();
+			if(os != null) os.close();
+		}
+		return output;
+	}
+	
+	public long compress(InputStream is, OutputStream os, long maxReadLength, long maxWriteLength) throws IOException, CompressionOutputSizeException {
+		if(maxReadLength < 0)
+			throw new IllegalArgumentException();
+		is = new BufferedInputStream(is, 32768);
+		GZIPOutputStream gos = null;
+		os = new BufferedOutputStream(os, 32768);
+		CountedOutputStream cos = new CountedOutputStream(os);
+		try {
 			gos = new GZIPOutputStream(cos);
 			long read = 0;
 			// Bigger input buffer, so can compress all at once.
@@ -45,12 +58,16 @@ public class GzipCompressor implements Compressor {
 					throw new CompressionOutputSizeException();
 			}
 			gos.flush();
+			gos.finish();
+			cos.flush();
+			gos = null;
+			return cos.written();
 		} finally {
-			if(is != null) is.close();
-			if(gos != null) gos.close();
-			else if(os != null) os.close();
+			if(gos != null) {
+				gos.flush();
+				gos.finish();
+			}
 		}
-		return output;
 	}
 
 	public Bucket decompress(Bucket data, BucketFactory bf, long maxLength, long maxCheckSizeLength, Bucket preferred) throws IOException, CompressionOutputSizeException {
@@ -74,8 +91,9 @@ public class GzipCompressor implements Compressor {
 		}
 	}
 
-	private long decompress(InputStream is, OutputStream os, long maxLength, long maxCheckSizeBytes) throws IOException, CompressionOutputSizeException {
-		GZIPInputStream gis = new GZIPInputStream(is);
+	public long decompress(InputStream is, OutputStream os, long maxLength, long maxCheckSizeBytes) throws IOException, CompressionOutputSizeException {
+		GZIPInputStream gis = new GZIPInputStream(new BufferedInputStream(is, 32768));
+		os = new BufferedOutputStream(os, 32768);
 		long written = 0;
 		byte[] buffer = new byte[4096];
 		while(true) {
@@ -98,7 +116,10 @@ public class GzipCompressor implements Compressor {
 				}
 				throw new CompressionOutputSizeException();
 			}
-			if(x <= -1) return written;
+			if(x <= -1) {
+				os.flush();
+				return written;
+			}
 			if(x == 0) throw new IOException("Returned zero from read()");
 			os.write(buffer, 0, x);
 			written += x;

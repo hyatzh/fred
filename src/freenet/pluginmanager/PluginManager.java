@@ -19,10 +19,10 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.TreeSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.Vector;
 import java.util.jar.Attributes;
 import java.util.jar.JarException;
@@ -43,8 +43,8 @@ import freenet.config.NodeNeedRestartException;
 import freenet.config.SubConfig;
 import freenet.crypt.SHA256;
 import freenet.keys.FreenetURI;
-import freenet.l10n.BaseL10n.LANGUAGE;
 import freenet.l10n.NodeL10n;
+import freenet.l10n.BaseL10n.LANGUAGE;
 import freenet.node.Node;
 import freenet.node.NodeClientCore;
 import freenet.node.RequestClient;
@@ -60,6 +60,7 @@ import freenet.support.HexUtil;
 import freenet.support.JarClassLoader;
 import freenet.support.Logger;
 import freenet.support.SerialExecutor;
+import freenet.support.Logger.LogLevel;
 import freenet.support.api.BooleanCallback;
 import freenet.support.api.HTTPRequest;
 import freenet.support.api.StringArrCallback;
@@ -102,8 +103,8 @@ public class PluginManager {
 	static final short PRIO = RequestStarter.INTERACTIVE_PRIORITY_CLASS;
 
 	public PluginManager(Node node, int lastVersion) {
-		logMINOR = Logger.shouldLog(Logger.MINOR, this);
-		logDEBUG = Logger.shouldLog(Logger.DEBUG, this);
+		logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
+		logDEBUG = Logger.shouldLog(LogLevel.DEBUG, this);
 		// config
 
 		toadletList = new HashMap<String, FredPlugin>();
@@ -721,6 +722,13 @@ public class PluginManager {
 	 *            The plugin specification
 	 */
 	public void removeCachedCopy(String pluginSpecification) {
+		if(pluginSpecification == null) {
+			// Will be null if the file for a given plugin can't be found, eg. if it has already been
+			// removed. Ignore it since the file isn't there anyway
+			Logger.warning(this, "Can't remove null from cache. Ignoring");
+			return;
+		}
+
 		int lastSlash = pluginSpecification.lastIndexOf('/');
 		String pluginFilename;
 		if(lastSlash == -1)
@@ -1023,7 +1031,7 @@ public class PluginManager {
 		addOfficialPlugin("XMLLibrarian", false, 25, true, new FreenetURI("CHK@PzdgNIKIzYKet2x6rk2i9TMA8R3RTKf7~H7NBB-D1m4,8rfAK29Z8LkAcmwfVgF0RBGtTxaZZBmc7qcX5AoQUEo,AAIC--8/XMLLibrarian.jar"));
 		addOfficialPlugin("XMLSpider", false, 46, true, new FreenetURI("CHK@2FZYDhLSbhGQXeVfJNptV1~V3dNmS4zI59PpNaBlRqo,bvvqS-mMgeWHgLpEJzzYc18xY2urQSGYPmq4nmmJV6k,AAIC--8/XMLSpider.jar"));
 		addOfficialPlugin("Freereader", false, 4, true, new FreenetURI("CHK@4PuSjXk4Z0Hdu04JLhdPHLyOVLljj8qVbjRn3rHVzvg,bDGYnuYj67Q4uzroPBEWAYWRk26bPzf-iQ4~Uo3S7mg,AAIC--8/Freereader.jar"));
-		addOfficialPlugin("Library", false, 11, true, new FreenetURI("CHK@Gz~arBWM6SPqhyURc0GM~NX4QkrIVvYXFWrqP~VKkeM,o1Atj4wm59uNjzhVJAvoovhViocEzUzBjxkb94CKSFU,AAIC--8/Library.jar"));
+		addOfficialPlugin("Library", false, 12, true, new FreenetURI("CHK@AXlkDi2x7gnmxKg238a1LLfpYIJrlQu5BvF2Y7cQXBY,iECQrxPnvo63kjWfEs7w7HK8h-ZvLwb1-CT37dNmPco,AAIC--8/Library.jar"));
 		addOfficialPlugin("Spider", false, 47, false, new FreenetURI("CHK@avlS677YAH4q40rxTX9RiL87tNCer-KFkEH4ihf5Too,Rf8YkLYfNuZ4EshXgDjkMwE9dQJ8JuFHfhi6bu986mY,AAIC--8/Spider.jar"));
 		} catch (MalformedURLException e) {
 			throw new Error("Malformed hardcoded URL: "+e, e);

@@ -19,6 +19,7 @@ import freenet.keys.InsertableUSK;
 import freenet.keys.USK;
 import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
+import freenet.support.Logger.LogLevel;
 import freenet.support.api.Bucket;
 import freenet.support.io.BucketTools;
 
@@ -36,7 +37,7 @@ public class USKInserter implements ClientPutState, USKFetcherCallback, PutCompl
 			
 			@Override
 			public void shouldUpdate() {
-				logMINOR = Logger.shouldLog(Logger.MINOR, this);
+				logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 			}
 		});
 	}
@@ -69,6 +70,8 @@ public class USKInserter implements ClientPutState, USKFetcherCallback, PutCompl
 	private boolean freeData;
 	final int hashCode;
 	private final int extraInserts;
+	final byte cryptoAlgorithm;
+	final byte[] forceCryptoKey;
 	
 	public void schedule(ObjectContainer container, ClientContext context) throws InsertException {
 		// Caller calls schedule()
@@ -92,11 +95,11 @@ public class USKInserter implements ClientPutState, USKFetcherCallback, PutCompl
 		if(persistent)
 			container.activate(pubUSK, 5);
 		synchronized(this) {
-			if(Logger.shouldLog(Logger.MINOR, this))
+			if(Logger.shouldLog(LogLevel.MINOR, this))
 				Logger.minor(this, "scheduling fetcher for "+pubUSK.getURI());
 			if(finished) return;
 			fetcher = context.uskManager.getFetcherForInsertDontSchedule(persistent ? pubUSK.clone() : pubUSK, parent.priorityClass, this, parent.getClient(), container, context, persistent);
-			if(Logger.shouldLog(Logger.MINOR, this))
+			if(Logger.shouldLog(LogLevel.MINOR, this))
 				Logger.minor(this, "scheduled: "+fetcher);
 		}
 		if(persistent) {
@@ -186,7 +189,7 @@ public class USKInserter implements ClientPutState, USKFetcherCallback, PutCompl
 				Bucket bucket = BucketTools.makeImmutableBucket(context.getBucketFactory(persistent), hintData);
 				SingleBlockInserter sb = 
 					new SingleBlockInserter(parent, bucket, (short) -1, uri,
-							ctx, m, false, sourceLength, token, getCHKOnly, true, true /* we don't use it */, null, container, context, persistent, false, extraInserts);
+							ctx, m, false, sourceLength, token, getCHKOnly, true, true /* we don't use it */, null, container, context, persistent, false, extraInserts, cryptoAlgorithm, forceCryptoKey);
 				Logger.normal(this, "Inserting "+uri+" for insert of "+pubUSK);
 				m.add(sb, container);
 				sb.schedule(container, context);
@@ -222,10 +225,10 @@ public class USKInserter implements ClientPutState, USKFetcherCallback, PutCompl
 		synchronized(this) {
 			if(finished) return;
 			edition = edNo;
-			if(Logger.shouldLog(Logger.MINOR, this))
+			if(Logger.shouldLog(LogLevel.MINOR, this))
 				Logger.minor(this, "scheduling insert for "+pubUSK.getURI()+ ' ' +edition);
 			sbi = new SingleBlockInserter(parent, data, compressionCodec, privUSK.getInsertableSSK(edition).getInsertURI(),
-					ctx, this, isMetadata, sourceLength, token, getCHKOnly, false, true /* we don't use it */, tokenObject, container, context, persistent, false, extraInserts);
+					ctx, this, isMetadata, sourceLength, token, getCHKOnly, false, true /* we don't use it */, tokenObject, container, context, persistent, false, extraInserts, cryptoAlgorithm, forceCryptoKey);
 		}
 		try {
 			sbi.schedule(container, context);
@@ -257,7 +260,7 @@ public class USKInserter implements ClientPutState, USKFetcherCallback, PutCompl
 		if(!targetURI.equals(realURI))
 			Logger.error(this, "URI should be "+targetURI+" actually is "+realURI);
 		else {
-			if(Logger.shouldLog(Logger.MINOR, this))
+			if(Logger.shouldLog(LogLevel.MINOR, this))
 				Logger.minor(this, "URI should be "+targetURI+" actually is "+realURI);
 			context.uskManager.updateKnownGood(pubUSK, edition, context);
 		}
@@ -325,7 +328,7 @@ public class USKInserter implements ClientPutState, USKFetcherCallback, PutCompl
 	
 	public USKInserter(BaseClientPutter parent, Bucket data, short compressionCodec, FreenetURI uri, 
 			InsertContext ctx, PutCompletionCallback cb, boolean isMetadata, int sourceLength, int token, 
-			boolean getCHKOnly, boolean addToParent, Object tokenObject, ObjectContainer container, ClientContext context, boolean freeData, boolean persistent, int extraInserts) throws MalformedURLException {
+			boolean getCHKOnly, boolean addToParent, Object tokenObject, ObjectContainer container, ClientContext context, boolean freeData, boolean persistent, int extraInserts, byte cryptoAlgorithm, byte[] forceCryptoKey) throws MalformedURLException {
 		this.hashCode = super.hashCode();
 		this.tokenObject = tokenObject;
 		this.persistent = persistent;
@@ -347,6 +350,8 @@ public class USKInserter implements ClientPutState, USKFetcherCallback, PutCompl
 		edition = pubUSK.suggestedEdition;
 		this.freeData = freeData;
 		this.extraInserts = extraInserts;
+		this.cryptoAlgorithm = cryptoAlgorithm;
+		this.forceCryptoKey = forceCryptoKey;
 	}
 
 	public BaseClientPutter getParent() {
@@ -439,7 +444,7 @@ public class USKInserter implements ClientPutState, USKFetcherCallback, PutCompl
 	}
 
 	public void removeFrom(ObjectContainer container, ClientContext context) {
-		if(Logger.shouldLog(Logger.MINOR, this))
+		if(Logger.shouldLog(LogLevel.MINOR, this))
 			Logger.minor(this, "Removing from database: "+this, new Exception("debug"));
 		// parent will remove self
 		if(freeData && data != null && container.ext().isStored(data)) {

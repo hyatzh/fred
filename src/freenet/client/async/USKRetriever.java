@@ -11,10 +11,13 @@ import freenet.client.ArchiveContext;
 import freenet.client.FetchContext;
 import freenet.client.FetchException;
 import freenet.client.FetchResult;
+import freenet.client.InsertContext.CompatibilityMode;
+import freenet.crypt.HashResult;
 import freenet.keys.FreenetURI;
 import freenet.keys.USK;
 import freenet.node.RequestClient;
 import freenet.support.Logger;
+import freenet.support.Logger.LogLevel;
 
 /**
  * Poll a USK, and when a new slot is found, fetch it. 
@@ -62,7 +65,7 @@ public class USKRetriever extends BaseClientGetter implements USKCallback {
 	}
 
 	public void onSuccess(FetchResult result, ClientGetState state, ObjectContainer container, ClientContext context) {
-		if(Logger.shouldLog(Logger.MINOR, this))
+		if(Logger.shouldLog(LogLevel.MINOR, this))
 			Logger.minor(this, "Success on "+this+" from "+state+" : length "+result.size()+" mime type "+result.getMimeType());
 		cb.onFound(origUSK, state.getToken(), result);
 		context.uskManager.updateKnownGood(origUSK, state.getToken(), context);
@@ -140,6 +143,18 @@ public class USKRetriever extends BaseClientGetter implements USKCallback {
 
 	@Override
 	protected void innerToNetwork(ObjectContainer container, ClientContext context) {
+		// Ignore
+	}
+
+	public void onExpectedTopSize(long size, long compressed, int blocksReq, int blocksTotal, ObjectContainer container, ClientContext context) {
+		// Ignore
+	}
+
+	public void onSplitfileCompatibilityMode(CompatibilityMode min, CompatibilityMode max, byte[] splitfileKey, boolean compressed, boolean bottomLayer, boolean definitiveAnyway, ObjectContainer container, ClientContext context) {
+		// Ignore
+	}
+	
+	public void onHashes(HashResult[] hashes, ObjectContainer container, ClientContext context) {
 		// Ignore
 	}
 

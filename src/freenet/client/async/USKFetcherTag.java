@@ -7,6 +7,7 @@ import freenet.keys.USK;
 import freenet.node.RequestClient;
 import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
+import freenet.support.Logger.LogLevel;
 import freenet.support.io.NativeThread;
 
 /**
@@ -167,6 +168,7 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 				context.jobRunner.queue(new DBJob() {
 
 					public boolean run(ObjectContainer container, ClientContext context) {
+						container.activate(USKFetcherTag.this, 1);
 						container.activate(callback, 1);
 						callback.onFailure(container, context);
 						container.deactivate(callback, 1);
@@ -240,8 +242,8 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 			
 			@Override
 			public void shouldUpdate() {
-				logMINOR = Logger.shouldLog(Logger.MINOR, this);
-//				logDEBUG = Logger.shouldLog(Logger.MINOR, this);
+				logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
+//				logDEBUG = Logger.shouldLog(LogLevel.MINOR, this);
 			}
 		});
 	}

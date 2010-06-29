@@ -51,10 +51,11 @@ import freenet.node.Version;
 import freenet.node.useralerts.AbstractUserAlert;
 import freenet.node.useralerts.UserAlert;
 import freenet.support.HTMLNode;
-import freenet.support.Logger;
 import freenet.support.LogThresholdCallback;
+import freenet.support.Logger;
 import freenet.support.SizeUtil;
 import freenet.support.TimeUtil;
+import freenet.support.Logger.LogLevel;
 import freenet.support.io.FileBucket;
 import freenet.support.io.RandomAccessFileWrapper;
 
@@ -73,7 +74,7 @@ public class UpdateOverMandatoryManager implements RequestClient {
 		Logger.registerLogThresholdCallback(new LogThresholdCallback(){
 			@Override
 			public void shouldUpdate(){
-				logMINOR = Logger.shouldLog(Logger.MINOR, this);
+				logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 			}
 		});
 	}
@@ -1154,9 +1155,10 @@ public class UpdateOverMandatoryManager implements RequestClient {
 			}
 		};
 		FileBucket bucket = new FileBucket(blob, true, false, false, false, false);
+		// We are inserting a binary blob so we don't need to worry about CompatibilityMode etc.
 		ClientPutter putter = new ClientPutter(callback, bucket,
 			FreenetURI.EMPTY_CHK_URI, null, updateManager.node.clientCore.makeClient(RequestStarter.INTERACTIVE_PRIORITY_CLASS).getInsertContext(true),
-			RequestStarter.INTERACTIVE_PRIORITY_CLASS, false, false, this, null, null, true);
+			RequestStarter.INTERACTIVE_PRIORITY_CLASS, false, false, this, null, null, true, updateManager.node.clientCore.clientContext, null);
 		try {
 			updateManager.node.clientCore.clientContext.start(putter, false);
 		} catch(InsertException e1) {

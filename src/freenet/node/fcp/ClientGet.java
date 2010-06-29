@@ -12,6 +12,7 @@ import com.db4o.ObjectContainer;
 import freenet.client.FetchContext;
 import freenet.client.FetchException;
 import freenet.client.FetchResult;
+import freenet.client.InsertContext;
 import freenet.client.async.BinaryBlob;
 import freenet.client.async.ClientContext;
 import freenet.client.async.ClientGetCallback;
@@ -21,12 +22,15 @@ import freenet.client.async.DBJob;
 import freenet.client.async.DatabaseDisabledException;
 import freenet.client.events.ClientEvent;
 import freenet.client.events.ClientEventListener;
+import freenet.client.events.ExpectedHashesEvent;
 import freenet.client.events.SendingToNetworkEvent;
+import freenet.client.events.SplitfileCompatibilityModeEvent;
 import freenet.client.events.SplitfileProgressEvent;
 import freenet.keys.FreenetURI;
 import freenet.support.Fields;
 import freenet.support.Logger;
 import freenet.support.SimpleFieldSet;
+import freenet.support.Logger.LogLevel;
 import freenet.support.api.Bucket;
 import freenet.support.io.CannotCreateFromFieldSetException;
 import freenet.support.io.FileBucket;
@@ -55,6 +59,8 @@ public class ClientGet extends ClientRequest implements ClientGetCallback, Clien
 	// Verbosity bitmasks
 	private static final int VERBOSITY_SPLITFILE_PROGRESS = 1;
 	private static final int VERBOSITY_SENT_TO_NETWORK = 2;
+	private static final int VERBOSITY_COMPATIBILITY_MODE = 4;
+	private static final int VERBOSITY_EXPECTED_HASHES = 8;
 
 	// Stuff waiting for reconnection
 	/** Did the request succeed? Valid if finished. */
@@ -75,6 +81,8 @@ public class ClientGet extends ClientRequest implements ClientGetCallback, Clien
 	private SimpleProgressMessage progressPending;
 	/** Have we received a SendingToNetworkEvent? */
 	private boolean sentToNetwork;
+	private CompatibilityMode compatMessage;
+	private ExpectedHashes expectedHashes;
 
 	/**
 	 * Create one for a global-queued request not made by FCP.
@@ -509,13 +517,42 @@ public class ClientGet extends ClientRequest implements ClientGetCallback, Clien
 	}
 
 	private void trySendProgress(FCPMessage msg, FCPConnectionOutputHandler handler, ObjectContainer container) {
+		int verbosityMask = 0;
 		if(persistenceType != ClientRequest.PERSIST_CONNECTION) {
 			FCPMessage oldProgress = null;
 			if(msg instanceof SimpleProgressMessage) {
 				oldProgress = progressPending;
 				progressPending = (SimpleProgressMessage)msg;
-			} else if(msg instanceof SendingToNetworkMessage)
+				verbosityMask = ClientGet.VERBOSITY_SPLITFILE_PROGRESS;
+			} else if(msg instanceof SendingToNetworkMessage) {
 				sentToNetwork = true;
+				verbosityMask = ClientGet.VERBOSITY_SENT_TO_NETWORK;
+			} else if(msg instanceof CompatibilityMode) {
+				CompatibilityMode compat = (CompatibilityMode)msg;
+				if(compatMessage != null) {
+					if(persistenceType == PERSIST_FOREVER) container.activate(compatMessage, 1);
+					compatMessage.merge(compat.min, compat.max, compat.cryptoKey, compat.dontCompress, compat.definitive);
+					if(persistenceType == PERSIST_FOREVER) container.store(compatMessage);
+				} else {
+					compatMessage = compat;
+					if(persistenceType == PERSIST_FOREVER) {
+						container.store(compatMessage);
+						container.store(this);
+					}
+				}
+				verbosityMask = ClientGet.VERBOSITY_COMPATIBILITY_MODE;
+			} else if(msg instanceof ExpectedHashes) {
+				if(expectedHashes != null) {
+					Logger.error(this, "Got a new ExpectedHashes", new Exception("debug"));
+				} else {
+					this.expectedHashes = (ExpectedHashes)msg;
+					if(persistenceType == PERSIST_FOREVER) {
+						container.store(this);
+					}
+				}
+				verbosityMask = ClientGet.VERBOSITY_EXPECTED_HASHES;
+			} else
+				verbosityMask = -1;
 			if(persistenceType == ClientRequest.PERSIST_FOREVER) {
 				container.store(this);
 				if(oldProgress != null) {
@@ -523,6 +560,17 @@ public class ClientGet extends ClientRequest implements ClientGetCallback, Clien
 					oldProgress.removeFrom(container);
 				}
 			}
+		} else {
+			if(msg instanceof SimpleProgressMessage)
+				verbosityMask = ClientGet.VERBOSITY_SPLITFILE_PROGRESS;
+			else if(msg instanceof SendingToNetworkMessage)
+				verbosityMask = ClientGet.VERBOSITY_SENT_TO_NETWORK;
+			else if(msg instanceof CompatibilityMode)
+				verbosityMask = ClientGet.VERBOSITY_COMPATIBILITY_MODE;
+			else if(msg instanceof ExpectedHashes)
+				verbosityMask = ClientGet.VERBOSITY_EXPECTED_HASHES;
+			else
+				verbosityMask = -1;
 		}
 		if(persistenceType == PERSIST_FOREVER)
 			container.activate(client, 1);
@@ -531,7 +579,7 @@ public class ClientGet extends ClientRequest implements ClientGetCallback, Clien
 		if(handler != null)
 			handler.queue(msg);
 		else
-			client.queueClientRequestMessage(msg, VERBOSITY_SPLITFILE_PROGRESS, container);
+			client.queueClientRequestMessage(msg, verbosityMask, container);
 		if(persistenceType == PERSIST_FOREVER && !client.isGlobalQueue)
 			container.deactivate(client, 1);
 	}
@@ -567,6 +615,18 @@ public class ClientGet extends ClientRequest implements ClientGetCallback, Clien
 				container.activate(allDataPending, 5);
 			handler.queue(allDataPending);
 		}
+		
+		if(compatMessage != null) {
+			if(persistenceType == PERSIST_FOREVER)
+				container.activate(compatMessage, 5);
+			handler.queue(compatMessage);
+		}
+		
+		if(expectedHashes != null) {
+			if(persistenceType == PERSIST_FOREVER)
+				container.activate(expectedHashes, Integer.MAX_VALUE);
+			handler.queue(expectedHashes);
+		}
 	}
 
 	@Override
@@ -589,7 +649,7 @@ public class ClientGet extends ClientRequest implements ClientGetCallback, Clien
 			finished = true;
 			started = true;
 		}
-		if(Logger.shouldLog(Logger.MINOR, this))
+		if(Logger.shouldLog(LogLevel.MINOR, this))
 			Logger.minor(this, "Caught "+e, e);
 		trySendDataFoundOrGetFailed(null, container);
 		if(persistenceType == PERSIST_FOREVER) {
@@ -655,6 +715,14 @@ public class ClientGet extends ClientRequest implements ClientGetCallback, Clien
 				container.activate(progressPending, 5);
 				progressPending.removeFrom(container);
 			}
+			if(compatMessage != null) {
+				container.activate(compatMessage, 5);
+				compatMessage.removeFrom(container);
+			}
+			if(expectedHashes != null) {
+				container.activate(expectedHashes, Integer.MAX_VALUE);
+				expectedHashes.removeFrom(container);
+			}
 		}
 		super.requestWasRemoved(container, context);
 	}
@@ -673,6 +741,12 @@ public class ClientGet extends ClientRequest implements ClientGetCallback, Clien
 			if(!((verbosity & VERBOSITY_SENT_TO_NETWORK) == VERBOSITY_SENT_TO_NETWORK))
 				return;
 			progress = new SendingToNetworkMessage(identifier, global);
+		} else if(ce instanceof SplitfileCompatibilityModeEvent) {
+			SplitfileCompatibilityModeEvent event = (SplitfileCompatibilityModeEvent)ce;
+			progress = new CompatibilityMode(identifier, global, event.minCompatibilityMode, event.maxCompatibilityMode, event.splitfileCryptoKey, event.dontCompress, event.bottomLayer);
+		} else if(ce instanceof ExpectedHashesEvent) {
+			ExpectedHashesEvent event = (ExpectedHashesEvent)ce;
+			progress = new ExpectedHashes(event, identifier, global);
 		}
 		else return; // Don't know what to do with event
 		// container may be null...
@@ -823,6 +897,24 @@ public class ClientGet extends ClientRequest implements ClientGetCallback, Clien
 		} else
 			return 0;
 	}
+	
+	public InsertContext.CompatibilityMode[] getCompatibilityMode(ObjectContainer container) {
+		if(persistenceType == PERSIST_FOREVER && compatMessage != null)
+			container.activate(compatMessage, 2);
+		if(compatMessage != null) {
+			return compatMessage.getModes();
+		} else
+			return new InsertContext.CompatibilityMode[] { InsertContext.CompatibilityMode.COMPAT_UNKNOWN, InsertContext.CompatibilityMode.COMPAT_UNKNOWN };
+	}
+	
+	public byte[] getOverriddenSplitfileCryptoKey(ObjectContainer container) {
+		if(persistenceType == PERSIST_FOREVER && compatMessage != null)
+			container.activate(compatMessage, 2);
+		if(compatMessage != null) {
+			return compatMessage.cryptoKey;
+		} else
+			return null;
+	}
 
 	@Override
 	public String getFailureReason(boolean longDescription, ObjectContainer container) {
@@ -900,6 +992,12 @@ public class ClientGet extends ClientRequest implements ClientGetCallback, Clien
 			if(persistenceType == PERSIST_FOREVER && progressPending != null)
 				progressPending.removeFrom(container);
 			this.progressPending = null;
+			if(persistenceType == PERSIST_FOREVER && compatMessage != null)
+				compatMessage.removeFrom(container);
+			compatMessage = null;
+			if(persistenceType == PERSIST_FOREVER && expectedHashes != null)
+				expectedHashes.removeFrom(container);
+				expectedHashes = null;
 			started = false;
 		}
 		if(persistenceType == PERSIST_FOREVER)

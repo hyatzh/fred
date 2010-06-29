@@ -24,6 +24,7 @@ import freenet.support.HTMLNode;
 import freenet.support.Logger;
 import freenet.support.MultiValueTable;
 import freenet.support.TimeUtil;
+import freenet.support.Logger.LogLevel;
 import freenet.support.api.HTTPRequest;
 
 public class PproxyToadlet extends Toadlet {
@@ -62,7 +63,7 @@ public class PproxyToadlet extends Toadlet {
 		if(path.startsWith("/")) path = path.substring(1);
 		if(path.startsWith("plugins/")) path = path.substring("plugins/".length());
 
-		if(Logger.shouldLog(Logger.MINOR, this)) Logger.minor(this, "Pproxy received POST on "+path);
+		if(Logger.shouldLog(LogLevel.MINOR, this)) Logger.minor(this, "Pproxy received POST on "+path);
 
 		final PluginManager pm = node.pluginManager;
 
@@ -303,7 +304,7 @@ public class PproxyToadlet extends Toadlet {
 
 		PluginManager pm = node.pluginManager;
 
-		if(Logger.shouldLog(Logger.MINOR, this))
+		if(Logger.shouldLog(LogLevel.MINOR, this))
 			Logger.minor(this, "Pproxy fetching "+path);
 		try {
 			if (path.equals("")) {

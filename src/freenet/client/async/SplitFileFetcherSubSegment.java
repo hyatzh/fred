@@ -29,6 +29,7 @@ import freenet.node.SendableGet;
 import freenet.node.SendableRequestItem;
 import freenet.node.SupportsBulkCallFailure;
 import freenet.support.Logger;
+import freenet.support.Logger.LogLevel;
 import freenet.support.api.Bucket;
 
 /**
@@ -80,7 +81,7 @@ public class SplitFileFetcherSubSegment extends SendableGet implements SupportsB
 		if(parent == null) throw new NullPointerException();
 		ctx = segment.blockFetchContext;
 		blockNums = new Vector<Integer>();
-		logMINOR = Logger.shouldLog(Logger.MINOR, this);
+		logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 	}
 	
 	@Override
@@ -173,18 +174,41 @@ public class SplitFileFetcherSubSegment extends SendableGet implements SupportsB
 			container.activate(blockNums, 1);
 			container.activate(segment, 1);
 		}
-		logMINOR = Logger.shouldLog(Logger.MINOR, this);
+		logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 		synchronized(segment) {
 			if(blockNums.isEmpty()) {
 				if(logMINOR)
 					Logger.minor(this, "No blocks to remove");
 				return null;
 			}
+			int x = 0;
 			for(int i=0;i<10;i++) {
 				Integer ret;
-				int x;
 				if(blockNums.size() == 0) return null;
 				x = context.random.nextInt(blockNums.size());
+				ret = blockNums.get(x);
+				int num = ret;
+				Key key = segment.getBlockNodeKey(num, container);
+				if(key == null) {
+					if(segment.isFinishing(container) || segment.isFinished(container)) return null;
+					if(segment.haveBlock(num, container))
+						Logger.error(this, "Already have block "+ret+" but was in blockNums on "+this);
+					else
+						Logger.error(this, "Key is null for block "+ret+" for "+this);
+					continue;
+				}
+				if(keys.hasKey(key)) {
+					continue;
+				}
+				if(logMINOR)
+					Logger.minor(this, "Removing block "+x+" of "+(blockNums.size()+1)+ " : "+ret+ " on "+this);
+				return new MySendableRequestItem(num);
+			}
+			// Exhaustive search starting at a random slot.
+			for(int i=0;i<blockNums.size();i++) {
+				x++;
+				if(x == blockNums.size()) x = 0;
+				Integer ret;
 				ret = blockNums.get(x);
 				int num = ret;
 				Key key = segment.getBlockNodeKey(num, container);
@@ -293,7 +317,7 @@ public class SplitFileFetcherSubSegment extends SendableGet implements SupportsB
 			container.activate(segment.errors, 1);
 		}
 		if(parent.isCancelled()) {
-			if(Logger.shouldLog(Logger.MINOR, this)) 
+			if(Logger.shouldLog(LogLevel.MINOR, this)) 
 				Logger.minor(this, "Failing: cancelled");
 			// Fail the segment.
 			segment.fail(new FetchException(FetchException.CANCELLED), container, context, false);
@@ -302,6 +326,8 @@ public class SplitFileFetcherSubSegment extends SendableGet implements SupportsB
 		}
 		for(int i=0;i<fetchExceptions.length;i++)
 			segment.errors.inc(fetchExceptions[i].getMode());
+		if(persistent)
+			segment.errors.storeTo(container);
 		int nonFatalExceptions = items.length - countFatal;
 		int[] blockNumbers = new int[nonFatalExceptions];
 		if(countFatal > 0) {
@@ -377,12 +403,14 @@ public class SplitFileFetcherSubSegment extends SendableGet implements SupportsB
 		}
 		boolean forceFatal = false;
 		if(parent.isCancelled()) {
-			if(Logger.shouldLog(Logger.MINOR, this)) 
+			if(Logger.shouldLog(LogLevel.MINOR, this)) 
 				Logger.minor(this, "Failing: cancelled");
 			e = new FetchException(FetchException.CANCELLED);
 			forceFatal = true;
 		}
 		segment.errors.inc(e.getMode());
+		if(persistent)
+			segment.errors.storeTo(container);
 		if(e.isFatal() && token == null) {
 			segment.fail(e, container, context, false);
 		} else if(e.isFatal() || forceFatal) {
@@ -421,7 +449,7 @@ public class SplitFileFetcherSubSegment extends SendableGet implements SupportsB
 		try {
 			data = block.decode(context.getBucketFactory(persistent), (int)(Math.min(ctx.maxOutputLength, Integer.MAX_VALUE)), false);
 		} catch (KeyDecodeException e1) {
-			if(Logger.shouldLog(Logger.MINOR, this))
+			if(Logger.shouldLog(LogLevel.MINOR, this))
 				Logger.minor(this, "Decode failure: "+e1, e1);
 			onFailure(new FetchException(FetchException.BLOCK_DECODE_ERROR, e1.getMessage()), token, container, context);
 			return null;
@@ -433,7 +461,7 @@ public class SplitFileFetcherSubSegment extends SendableGet implements SupportsB
 			onFailure(new FetchException(FetchException.BUCKET_ERROR, e), token, container, context);
 			return null;
 		}
-		if(Logger.shouldLog(Logger.MINOR, this))
+		if(Logger.shouldLog(LogLevel.MINOR, this))
 			Logger.minor(this, data == null ? "Could not decode: null" : ("Decoded "+data.size()+" bytes"));
 		return data;
 	}
@@ -498,7 +526,7 @@ public class SplitFileFetcherSubSegment extends SendableGet implements SupportsB
 //			container.activate(segment, 1);
 			container.activate(blockNums, 1);
 		}
-		boolean logMINOR = Logger.shouldLog(Logger.MINOR, this);
+		boolean logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 		if(logMINOR) Logger.minor(this, "Adding "+blocks+" blocks to "+this);
 		synchronized(segment) {
 			if(cancelled)
@@ -528,7 +556,7 @@ public class SplitFileFetcherSubSegment extends SendableGet implements SupportsB
 //			container.activate(segment, 1);
 			container.activate(blockNums, 1);
 		}
-		boolean logMINOR = Logger.shouldLog(Logger.MINOR, this);
+		boolean logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 		if(logMINOR) Logger.minor(this, "Adding block "+blockNo+" to "+this);
 		if(blockNo < 0) throw new IllegalArgumentException();
 		Integer i = Integer.valueOf(blockNo);
@@ -724,10 +752,10 @@ public class SplitFileFetcherSubSegment extends SendableGet implements SupportsB
 			container.activate(segment, 1);
 		}
 		if(cancelled) {
-			if(Logger.shouldLog(Logger.MINOR, this)) Logger.minor(this, "Not requeueing as already cancelled");
+			if(Logger.shouldLog(LogLevel.MINOR, this)) Logger.minor(this, "Not requeueing as already cancelled");
 			return;
 		}
-		if(Logger.shouldLog(Logger.MINOR, this))
+		if(Logger.shouldLog(LogLevel.MINOR, this))
 			Logger.minor(this, "Requeueing after cooldown "+key+" for "+this);
 		if(!segment.requeueAfterCooldown(key, time, container, context, this)) {
 			Logger.error(this, "Key was not wanted after cooldown: "+key+" for "+this+" in requeueAfterCooldown");

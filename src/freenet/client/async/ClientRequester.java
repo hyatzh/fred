@@ -9,6 +9,7 @@ import freenet.keys.FreenetURI;
 import freenet.node.RequestClient;
 import freenet.node.SendableRequest;
 import freenet.support.Logger;
+import freenet.support.Logger.LogLevel;
 
 /** A high level client request. A request (either fetch or put) started
  * by a Client. Has a suitable context and a URI; is fulfilled only when
@@ -140,10 +141,10 @@ public abstract class ClientRequester {
 		}
 
 		if (wasFinalized) {
-			if (Logger.globalGetThreshold() > Logger.MINOR)
-				Logger.error(this, "addBlock() but set finalized! on " + this);
-			else
+			if (LogLevel.MINOR.matchesThreshold(Logger.globalGetThresholdNew()))
 				Logger.error(this, "addBlock() but set finalized! on " + this, new Exception("error"));
+			else
+				Logger.error(this, "addBlock() but set finalized! on " + this);
 		}
 		
 		if(logMINOR) Logger.minor(this, "addBlock(): total="+totalBlocks+" successful="+successfulBlocks+" failed="+failedBlocks+" required="+minSuccessBlocks);
@@ -159,10 +160,10 @@ public abstract class ClientRequester {
 		}
 
 		if (wasFinalized) {
-			if(Logger.globalGetThreshold() > Logger.MINOR)
-				Logger.error(this, "addBlocks() but set finalized! on "+this);
-			else
+			if (LogLevel.MINOR.matchesThreshold(Logger.globalGetThresholdNew()))
 				Logger.error(this, "addBlocks() but set finalized! on "+this, new Exception("error"));
+			else
+				Logger.error(this, "addBlocks() but set finalized! on "+this);
 		}
 		
 		if(logMINOR) Logger.minor(this, "addBlocks("+num+"): total="+totalBlocks+" successful="+successfulBlocks+" failed="+failedBlocks+" required="+minSuccessBlocks); 
@@ -208,6 +209,14 @@ public abstract class ClientRequester {
 		if(logMINOR) Logger.minor(this, "addMustSucceedBlocks("+blocks+"): total="+totalBlocks+" successful="+successfulBlocks+" failed="+failedBlocks+" required="+minSuccessBlocks); 
 	}
 
+	/** Insertors should override this. The method is duplicated rather than calling addMustSucceedBlocks to avoid confusing consequences when addMustSucceedBlocks does other things. */
+	public synchronized void addRedundantBlocks(int blocks, ObjectContainer container) {
+		totalBlocks += blocks;
+		minSuccessBlocks += blocks;
+		if(persistent()) container.store(this);
+		if(logMINOR) Logger.minor(this, "addMustSucceedBlocks("+blocks+"): total="+totalBlocks+" successful="+successfulBlocks+" failed="+failedBlocks+" required="+minSuccessBlocks); 
+	}
+	
 	/** Notify clients, usually via a SplitfileProgressEvent, of the current progress. */
 	public abstract void notifyClients(ObjectContainer container, ClientContext context);
 	

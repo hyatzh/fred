@@ -4,8 +4,6 @@
 package freenet.client.filter;
 
 import java.io.BufferedInputStream;
-import java.io.ByteArrayInputStream;
-import java.io.DataInputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -14,12 +12,13 @@ import java.io.UnsupportedEncodingException;
 import java.net.URI;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.Hashtable;
+import java.util.LinkedHashMap;
 
 import freenet.client.filter.CharsetExtractor.BOMDetection;
 import freenet.l10n.NodeL10n;
 import freenet.support.Logger;
+import freenet.support.Logger.LogLevel;
 import freenet.support.io.FileUtil;
 
 /**
@@ -31,7 +30,7 @@ public class ContentFilter {
 	static final Hashtable<String, MIMEType> mimeTypesByName = new Hashtable<String, MIMEType>();
 	
 	/** The HTML mime types are defined here, to allow other modules to identify it*/
-	public static String[] HTML_MIME_TYPES=new String[]{"text/html", "text/xhtml", "text/xml+xhtml", "application/xhtml+xml"};
+	public static String[] HTML_MIME_TYPES=new String[]{"text/html", "application/xhtml+xml", "text/xml+xhtml", "text/xhtml", "application/xhtml"};
 	
 	static {
 		init();
@@ -75,12 +74,16 @@ public class ContentFilter {
 				l10n("imageBMPWriteAdvice"), false, null, null, false));	
 
 
+		// ICO needs filtering.
+		// Format is not the same as BMP iirc.
+		// DoS: http://www.kb.cert.org/vuls/id/290961
+		// Remote code exec: http://www.microsoft.com/technet/security/bulletin/ms09-062.mspx
 		
-		// ICO - probably safe - FIXME check this out, write filters
-		register(new MIMEType("image/x-icon", "ico", new String[] { "image/vnd.microsoft.icon", "image/ico", "application/ico"}, 
-				new String[0], true, false, null, null, false, false, false, false, false, false,
-				l10n("imageIcoReadAdvice"),
-				l10n("imageIcoWriteAdvice"), false, null, null, false));
+//		// ICO - probably safe - FIXME check this out, write filters
+//		register(new MIMEType("image/x-icon", "ico", new String[] { "image/vnd.microsoft.icon", "image/ico", "application/ico"}, 
+//				new String[0], true, false, null, null, false, false, false, false, false, false,
+//				l10n("imageIcoReadAdvice"),
+//				l10n("imageIcoWriteAdvice"), false, null, null, false));
 		
 		// PDF - very dangerous - FIXME ideally we would have a filter, this is such a common format...
 		register(new MIMEType("application/pdf", "pdf", new String[] { "application/x-pdf" }, new String[0],
@@ -174,7 +177,7 @@ public class ContentFilter {
 	 *             If data is invalid (e.g. corrupted file) and the filter have no way to recover.
 	 */
 	public static FilterStatus filter(InputStream input, OutputStream output, String typeName, String maybeCharset, FilterCallback filterCallback) throws UnsafeContentTypeException, IOException {
-		if(Logger.shouldLog(Logger.MINOR, ContentFilter.class)) Logger.minor(ContentFilter.class, "Filtering data of type"+typeName);
+		if(Logger.shouldLog(LogLevel.MINOR, ContentFilter.class)) Logger.minor(ContentFilter.class, "Filtering data of type"+typeName);
 		String type = typeName;
 		String options = "";
 		String charset = null;
@@ -268,7 +271,7 @@ public class ContentFilter {
 					// so check with the full extractor.
 					try {
 						if((charset = handler.charsetExtractor.getCharset(input, length, charset)) != null) {
-							if(Logger.shouldLog(Logger.MINOR, ContentFilter.class))
+							if(Logger.shouldLog(LogLevel.MINOR, ContentFilter.class))
 								Logger.minor(ContentFilter.class, "Returning charset: "+charset);
 							return charset;
 						} else if(bom.mustHaveCharset)
@@ -286,7 +289,7 @@ public class ContentFilter {
 			if(handler.defaultCharset != null) {
 				try {
 					if((charset = handler.charsetExtractor.getCharset(input, length, handler.defaultCharset)) != null) {
-				        if(Logger.shouldLog(Logger.MINOR, ContentFilter.class))
+				        if(Logger.shouldLog(LogLevel.MINOR, ContentFilter.class))
 				        	Logger.minor(ContentFilter.class, "Returning charset: "+charset);
 						return charset;
 					}
@@ -317,7 +320,7 @@ public class ContentFilter {
 					return charset;
 			} catch (UnsupportedEncodingException e) {
 				// Doesn't seem to be supported by prior to 1.6.
-		        if(Logger.shouldLog(Logger.MINOR, ContentFilter.class))
+		        if(Logger.shouldLog(LogLevel.MINOR, ContentFilter.class))
 		        	Logger.minor(ContentFilter.class, "UTF-32 not supported");
 			} catch (DataFilterException e) {
 				// Ignore
@@ -328,6 +331,9 @@ public class ContentFilter {
 		// If no BOM, use the charset from the referring document.
 		if(handler.useMaybeCharset && maybeCharset != null && (maybeCharset.length() != 0))
 			return maybeCharset;
+		
+		if(charset != null)
+			return charset;
 		
 		// If it doesn't have a BOM, then it's *probably* safe to use as default.
 		

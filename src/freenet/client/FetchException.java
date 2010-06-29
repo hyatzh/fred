@@ -34,7 +34,7 @@ public class FetchException extends Exception {
 	
 	/** The expected size of the data had the fetch succeeded, or -1. May not be accurate. If retrying 
 	 * after TOO_BIG, you need to set the temporary and final data limits to at least this big! */
-	public final long expectedSize;
+	public long expectedSize;
 	
 	/** The expected final MIME type, or null. */
 	String expectedMimeType;
@@ -434,6 +434,8 @@ public class FetchException extends Exception {
 	public static final int CONTENT_VALIDATION_UNKNOWN_MIME = 32;
 	/** The content filter knows this data type is dangerous */
 	public static final int CONTENT_VALIDATION_BAD_MIME = 33;
+	/** The metadata specified a hash but the data didn't match it. */
+	public static final int CONTENT_HASH_FAILED = 34;
 
 	/** Is an error fatal i.e. is there no point retrying? */
 	public boolean isFatal() {
@@ -462,6 +464,7 @@ public class FetchException extends Exception {
 		case TOO_BIG:
 		case TOO_BIG_METADATA:
 		case TOO_MANY_BLOCKS_PER_SEGMENT:
+		case CONTENT_HASH_FAILED:
 			return true;
 
 		// Low level errors, can be retried
@@ -482,6 +485,8 @@ public class FetchException extends Exception {
 		
 		//The ContentFilter failed to validate the data. Retrying won't fix this.
 			case CONTENT_VALIDATION_FAILED:
+			case CONTENT_VALIDATION_UNKNOWN_MIME:
+			case CONTENT_VALIDATION_BAD_MIME:
 				return true;
 
 		// Wierd ones
