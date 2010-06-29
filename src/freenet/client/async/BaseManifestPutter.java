@@ -24,7 +24,6 @@ import freenet.client.Metadata.SimpleManifestComposer;
 import freenet.client.events.SplitfileProgressEvent;
 import freenet.keys.BaseClientKey;
 import freenet.keys.FreenetURI;
-import freenet.keys.InsertableClientSSK;
 import freenet.keys.Key;
 import freenet.node.RequestClient;
 import freenet.support.Logger;
