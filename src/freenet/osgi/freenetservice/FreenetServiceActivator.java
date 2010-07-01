@@ -39,6 +39,7 @@ public class FreenetServiceActivator implements BundleActivator {
 
 		Logger.error(this, "Hello, Error");
 		Logger.normal(this, "Hello, Normal");
+		Logger.warning(this, "Hello, Warning");
 		Logger.debug(this, "Hello, Debug");
 
 		System.out.println("Welcome, Freenet!");
