@@ -14,12 +14,12 @@ import freenet.log.Logger.LogLevel;
 import freenet.node.NodeStarter;
 
 public class FreenetServiceActivator implements BundleActivator {
-	
+
 	private static BundleContext context;
 
 	public void start(BundleContext bundleContext) throws Exception {
 		System.out.println("Hallo, Freenet...");
-		
+
 		context = bundleContext;
 		ServiceReference sr = context.getServiceReference(LogService.class.getName());
 		LogService ls = null;
@@ -27,12 +27,17 @@ public class FreenetServiceActivator implements BundleActivator {
 			ls = (LogService) context.getService(sr);
 		}
 
+		String threshold = context.getProperty("foe.log.threshold").toUpperCase();
+		String detailedthreshold = context.getProperty("foe.log.detailedthreshold");
+
+		LogLevel level = LogLevel.valueOf(threshold);
 		LoggerHook hook;
 		hook = new OSGiLoggerHook(ls,
-				"(c, t, p): m", "MMM dd, yyyy HH:mm:ss:SSS", LogLevel.DEBUG);
+				"(c, t, p): m", "MMM dd, yyyy HH:mm:ss:SSS", level);
+		hook.setDetailedThresholds(detailedthreshold);
 
 		Logger.globalAddHook(hook);
-		
+
 		// for compatiblity with old code also
 		// init the old logger
 		freenet.support.Logger.migrationHack(hook);
