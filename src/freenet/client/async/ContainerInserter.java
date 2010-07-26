@@ -12,8 +12,8 @@ import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
-import org.apache.tools.tar.TarEntry;
-import org.apache.tools.tar.TarOutputStream;
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
 
 import com.db4o.ObjectContainer;
 
@@ -293,23 +293,23 @@ public class ContainerInserter implements ClientPutState {
 		if(logMINOR) Logger.minor(this, "Create a TAR Bucket");
 		
 		OutputStream os = new BufferedOutputStream(outputBucket.getOutputStream());
-		TarOutputStream tarOS = new TarOutputStream(os);
-		tarOS.setLongFileMode(TarOutputStream.LONGFILE_GNU);
-		TarEntry ze;
+		TarArchiveOutputStream tarOS = new TarArchiveOutputStream(os);
+		tarOS.setLongFileMode(TarArchiveOutputStream.LONGFILE_GNU);
+		TarArchiveEntry ze;
 
 		for(ContainerElement ph : containerItems) {
 			if(logMINOR)
 				Logger.minor(this, "Putting into tar: "+ph+" data length "+ph.data.size()+" name "+ph.targetInArchive);
-			ze = new TarEntry(ph.targetInArchive);
+			ze = new TarArchiveEntry(ph.targetInArchive);
 			ze.setModTime(0);
 			long size = ph.data.size();
 			ze.setSize(size);
-			tarOS.putNextEntry(ze);
+			tarOS.putArchiveEntry(ze);
 			BucketTools.copyTo(ph.data, tarOS, size);
-			tarOS.closeEntry();
+			tarOS.closeArchiveEntry();
 		}
 
-		tarOS.closeEntry();
+		tarOS.closeArchiveEntry();
 		// Both finish() and close() are necessary.
 		tarOS.finish();
 		tarOS.flush();

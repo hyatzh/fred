@@ -13,9 +13,8 @@ import java.util.Vector;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
-import org.apache.tools.tar.TarEntry;
-import org.apache.tools.tar.TarOutputStream;
-
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
 import com.db4o.ObjectContainer;
 
 import freenet.client.ClientMetadata;
@@ -29,7 +28,6 @@ import freenet.client.ArchiveManager.ARCHIVE_TYPE;
 import freenet.client.events.SplitfileProgressEvent;
 import freenet.keys.BaseClientKey;
 import freenet.keys.FreenetURI;
-import freenet.keys.InsertableClientSSK;
 import freenet.keys.Key;
 import freenet.node.RequestClient;
 import freenet.support.LogThresholdCallback;
@@ -964,9 +962,9 @@ public class SimpleManifestPutter extends BaseClientPutter implements PutComplet
 		if(logMINOR) Logger.minor(this, "Create a TAR Bucket");
 
 		OutputStream os = new BufferedOutputStream(outputBucket.getOutputStream());
-		TarOutputStream tarOS = new TarOutputStream(os);
-		tarOS.setLongFileMode(TarOutputStream.LONGFILE_GNU);
-		TarEntry ze;
+		TarArchiveOutputStream tarOS = new TarArchiveOutputStream(os);
+		tarOS.setLongFileMode(TarArchiveOutputStream.LONGFILE_GNU);
+		TarArchiveEntry ze;
 
 		for(PutHandler ph : elementsToPutInArchive) {
 			if(persistent()) {
@@ -975,26 +973,26 @@ public class SimpleManifestPutter extends BaseClientPutter implements PutComplet
 			}
 			if(logMINOR)
 				Logger.minor(this, "Putting into tar: "+ph+" data length "+ph.data.size()+" name "+ph.targetInArchive);
-			ze = new TarEntry(ph.targetInArchive);
+			ze = new TarArchiveEntry(ph.targetInArchive);
 			ze.setModTime(0);
 			long size = ph.data.size();
 			ze.setSize(size);
-			tarOS.putNextEntry(ze);
+			tarOS.putArchiveEntry(ze);
 			BucketTools.copyTo(ph.data, tarOS, size);
-			tarOS.closeEntry();
+			tarOS.closeArchiveEntry();
 		}
 
 		// Add .metadata - after the rest.
 		if(logMINOR)
 			Logger.minor(this, "Putting metadata into tar: length is "+inputBucket.size());
-		ze = new TarEntry(".metadata");
+		ze = new TarArchiveEntry(".metadata");
 		ze.setModTime(0); // -1 = now, 0 = 1970.
 		long size = inputBucket.size();
 		ze.setSize(size);
-		tarOS.putNextEntry(ze);
+		tarOS.putArchiveEntry(ze);
 		BucketTools.copyTo(inputBucket, tarOS, size);
 
-		tarOS.closeEntry();
+		tarOS.closeArchiveEntry();
 		// Both finish() and close() are necessary.
 		tarOS.finish();
 		tarOS.flush();

@@ -16,11 +16,11 @@ import java.util.zip.GZIPInputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-import net.contrapunctus.lzma.LzmaInputStream;
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
+import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream;
 
-import org.apache.tools.bzip2.CBZip2InputStream;
-import org.apache.tools.tar.TarEntry;
-import org.apache.tools.tar.TarInputStream;
+import net.contrapunctus.lzma.LzmaInputStream;
 
 import com.db4o.ObjectContainer;
 
@@ -302,7 +302,7 @@ public class ArchiveManager {
 				wrapper = null;
 			} else if(ctype == COMPRESSOR_TYPE.BZIP2) {
 				if(logMINOR) Logger.minor(this, "dealing with BZIP2");
-				is = new CBZip2InputStream(data.getInputStream());
+				is = new BZip2CompressorInputStream(data.getInputStream());
 				wrapper = null;
 			} else if(ctype == COMPRESSOR_TYPE.GZIP) {
 				if(logMINOR) Logger.minor(this, "dealing with GZIP");
@@ -366,19 +366,19 @@ public class ArchiveManager {
 
 	private void handleTARArchive(ArchiveStoreContext ctx, FreenetURI key, InputStream data, String element, ArchiveExtractCallback callback, MutableBoolean gotElement, boolean throwAtExit, ObjectContainer container, ClientContext context) throws ArchiveFailureException, ArchiveRestartException {
 		if(logMINOR) Logger.minor(this, "Handling a TAR Archive");
-		TarInputStream tarIS = null;
+		TarArchiveInputStream tarIS = null;
 		try {
-			tarIS = new TarInputStream(data);
+			tarIS = new TarArchiveInputStream(data);
 
 			// MINOR: Assumes the first entry in the tarball is a directory.
-			TarEntry entry;
+			TarArchiveEntry entry;
 
 			byte[] buf = new byte[32768];
 			HashSet<String> names = new HashSet<String>();
 			boolean gotMetadata = false;
 
 outerTAR:		while(true) {
-				entry = tarIS.getNextEntry();
+				entry = tarIS.getNextTarEntry();
 				if(entry == null) break;
 				if(entry.isDirectory()) continue;
 				String name = entry.getName();
