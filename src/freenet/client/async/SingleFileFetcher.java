@@ -855,8 +855,6 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 				
 				clientMetadata.mergeNoOverwrite(metadata.getClientMetadata()); // even splitfiles can have mime types!
 				if(persistent) container.store(clientMetadata);
-				String mime = clientMetadata.getMIMEType();
-				if(mime != null) rcb.onExpectedMIME(mime, container, context);
 				
 				String mimeType = clientMetadata.getMIMETypeNoParams();
 				if(mimeType != null && ArchiveManager.ARCHIVE_TYPE.isUsableArchiveType(mimeType) && metaStrings.size() > 0) {
@@ -870,6 +868,9 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 					}
 					if(logMINOR) Logger.minor(this, "Handling implicit container... (splitfile)");
 					continue;
+				} else {
+					String mime = clientMetadata.getMIMEType();
+					if(mime != null) rcb.onExpectedMIME(mime, container, context);
 				}
 				
 				if(metaStrings.isEmpty() && isFinal && mimeType != null && ctx.allowedMIMETypes != null &&
@@ -1052,9 +1053,11 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 				if(state != null)
 					state.removeFrom(container, context);
 				container.delete(this);
-				for(HashResult res : hashes) {
-					container.activate(res, Integer.MAX_VALUE);
-					res.removeFrom(container);
+				if(hashes != null) {
+					for(HashResult res : hashes) {
+						container.activate(res, Integer.MAX_VALUE);
+						res.removeFrom(container);
+					}
 				}
 			}
 		}
@@ -1114,9 +1117,11 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 					state.removeFrom(container, context);
 				container.delete(this);
 				callback.removeFrom(container);
-				for(HashResult res : hashes) {
-					container.activate(res, Integer.MAX_VALUE);
-					res.removeFrom(container);
+				if(hashes != null) {
+					for(HashResult res : hashes) {
+						container.activate(res, Integer.MAX_VALUE);
+						res.removeFrom(container);
+					}
 				}
 			}
 		}
@@ -1428,10 +1433,12 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 					sf.schedule(container, context);
 					if(persistent) removeFrom(container);
 				} else {
+					if(persistent) container.activate(cb, 1);
 					cb.onFailure(new FetchException(FetchException.PERMANENT_REDIRECT, newUSK.getURI().addMetaStrings(metaStrings)), null, container, context);
 					if(persistent) removeFrom(container);
 				}
 			} catch (FetchException e) {
+				if(persistent) container.activate(cb, 1);
 				cb.onFailure(e, null, container, context);
 				if(persistent) removeFrom(container);
 			}
@@ -1445,13 +1452,22 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 		}
 
 		public void onFailure(ObjectContainer container, ClientContext context) {
+			FetchException e = null;
 			if(datastoreOnly) {
-				onFoundEdition(usk.suggestedEdition, usk, container, context, false, (short) -1, null, false, false);
-				return;
+				if(persistent)
+					container.activate(usk, Integer.MAX_VALUE);
+				try {
+					onFoundEdition(usk.suggestedEdition, usk, container, context, false, (short) -1, null, false, false);
+					return;
+				} catch (Throwable t) {
+					e = new FetchException(FetchException.INTERNAL_ERROR, t);
+				}
 			}
 			if(persistent)
 				container.activate(this, 2);
-			cb.onFailure(new FetchException(FetchException.DATA_NOT_FOUND, "No USK found"), null, container, context);
+			if(e != null) e = new FetchException(FetchException.DATA_NOT_FOUND, "No USK found");
+			if(persistent) container.activate(cb, 1);
+			cb.onFailure(e, null, container, context);
 			if(persistent) removeFrom(container);
 		}
 

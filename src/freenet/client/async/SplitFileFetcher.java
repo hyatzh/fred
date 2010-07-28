@@ -859,9 +859,16 @@ public class SplitFileFetcher implements ClientGetState, HasKeyListener {
 			container.store(this);
 	}
 
-	public void onFailed(KeyListenerConstructionException e, ObjectContainer container, ClientContext context) {
-		otherFailure = e.getFetchException();
+	public void onFailed(FetchException e, ObjectContainer container, ClientContext context) {
+		synchronized(this) {
+			if(finished) return;
+			otherFailure = e;
+		}
 		cancel(container, context);
+	}
+	
+	public void onFailed(KeyListenerConstructionException e, ObjectContainer container, ClientContext context) {
+		onFailed(e.getFetchException(), container, context);
 	}
 
 	private boolean toRemove = false;
@@ -898,7 +905,6 @@ public class SplitFileFetcher implements ClientGetState, HasKeyListener {
 	public void innerRemoveFrom(ObjectContainer container, ClientContext context) {
 		if(logMINOR) Logger.minor(this, "removeFrom() on "+this, new Exception("debug"));
 		if(!container.ext().isStored(this)) {
-			Logger.error(this, "Already removed??? on "+this, new Exception("error"));
 			return;
 		}
 		container.activate(blockFetchContext, 1);
