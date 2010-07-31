@@ -377,7 +377,7 @@ public class ArchiveManager {
 			HashSet<String> names = new HashSet<String>();
 			boolean gotMetadata = false;
 
-outerTAR:		while(true) {
+outerTAR:	while(true) {
 				entry = tarIS.getNextTarEntry();
 				if(entry == null) break;
 				if(entry.isDirectory()) continue;
