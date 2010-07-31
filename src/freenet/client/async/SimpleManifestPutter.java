@@ -722,7 +722,7 @@ public class SimpleManifestPutter extends BaseClientPutter implements PutComplet
 		makePutHandlers(manifestElements, putHandlersByName, "", persistent);
 	}
 
-	private void makePutHandlers(HashMap<String, Object> manifestElements, HashMap<String,Object> putHandlersByName, String ZipPrefix, boolean persistent) {
+	private void makePutHandlers(HashMap<String, Object> manifestElements, HashMap<String,Object> putHandlersByName, String zipPrefix, boolean persistent) {
 		Iterator<String> it = manifestElements.keySet().iterator();
 		while(it.hasNext()) {
 			String name = it.next();
@@ -730,7 +730,7 @@ public class SimpleManifestPutter extends BaseClientPutter implements PutComplet
 			if (o instanceof HashMap) {
 				HashMap<String,Object> subMap = new HashMap<String,Object>();
 				putHandlersByName.put(name, subMap);
-				makePutHandlers(Metadata.forceMap(o), subMap, ZipPrefix+name+ '/', persistent);
+				makePutHandlers(Metadata.forceMap(o), subMap, zipPrefix+name+ '/', persistent);
 				if(Logger.shouldLog(LogLevel.DEBUG, this))
 					Logger.debug(this, "Sub map for "+name+" : "+subMap.size()+" elements from "+((HashMap)o).size());
 			} else {
@@ -767,7 +767,7 @@ public class SimpleManifestPutter extends BaseClientPutter implements PutComplet
 						// Put it in the zip.
 						if(logMINOR)
 							Logger.minor(this, "Putting into ZIP: "+name);
-						ph = new PutHandler(this, name, ZipPrefix+element.fullName, cm, data, persistent);
+						ph = new PutHandler(this, name, zipPrefix+element.fullName, cm, data, persistent);
 						if(logMINOR)
 							Logger.minor(this, "Putting file into container: "+element.fullName+" : "+ph);
 						elementsToPutInArchive.add(ph);
