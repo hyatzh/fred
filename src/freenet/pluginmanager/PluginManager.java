@@ -1273,7 +1273,7 @@ public class PluginManager {
 			}
 
 			try {
-				JarClassLoader jarClassLoader = new JarClassLoader(pluginFile);
+				JarClassLoader jarClassLoader = new JarClassLoader(pluginFile, this.getClass().getClassLoader());
 				Class<?> pluginMainClass = jarClassLoader.loadClass(pluginMainClassName);
 				Object object = pluginMainClass.newInstance();
 				if(!(object instanceof FredPlugin)) {

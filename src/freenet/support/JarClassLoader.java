@@ -21,7 +21,6 @@ package freenet.support;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.MalformedURLException;
@@ -41,40 +40,12 @@ import freenet.support.io.FileUtil;
  * 
  * @author <a href="mailto:dr@ina-germany.de">David Roden</a>
  * @version $Id$
+ * @deprecated replace plugins with bundles
  */
 public class JarClassLoader extends ClassLoader implements Closeable {
 
 	/** The temporary jar file. */
 	private JarFile tempJarFile;
-	
-	/**
-	 * Constructs a new jar class loader that loads classes from the jar file
-	 * with the given name in the local file system.
-	 * 
-	 * @param fileName
-	 *            The name of the jar file
-	 * @throws IOException
-	 *             if an I/O error occurs
-	 */
-	public JarClassLoader(String fileName) throws IOException {
-		this(new File(fileName));
-	}
-
-	/**
-	 * Constructs a new jar class loader that loads classes from the specified
-	 * URL.
-	 * 
-	 * @param fileUrl
-	 *            The URL to load the jar file from
-	 * @param length
-	 *            The length of the jar file if known, <code>-1</code>
-	 *            otherwise
-	 * @throws IOException
-	 *             if an I/O error occurs
-	 */
-	public JarClassLoader(URL fileUrl, long length) throws IOException {
-		copyFileToTemp(fileUrl.openStream(), length);
-	}
 
 	/**
 	 * Constructs a new jar class loader that loads classes from the specified
@@ -85,29 +56,9 @@ public class JarClassLoader extends ClassLoader implements Closeable {
 	 * @throws IOException
 	 *             if an I/O error occurs
 	 */
-	public JarClassLoader(File file) throws IOException {
+	public JarClassLoader(File file, ClassLoader parent) throws IOException {
+		super(parent);
 		tempJarFile = new JarFile(file);
-	}
-
-	/**
-	 * Copies the contents of the input stream (which are supposed to be the
-	 * contents of a jar file) to a temporary location.
-	 * 
-	 * @param inputStream
-	 *            The input stream to read from
-	 * @param length
-	 *            The length of the stream if known, <code>-1</code> if the
-	 *            length is not known
-	 * @throws IOException
-	 *             if an I/O error occurs
-	 */
-	private void copyFileToTemp(InputStream inputStream, long length) throws IOException {
-		File tempFile = File.createTempFile("jar-", ".tmp");
-		FileOutputStream fileOutputStream = new FileOutputStream(tempFile);
-		FileUtil.copy(inputStream, fileOutputStream, length);
-		fileOutputStream.close();
-		tempFile.deleteOnExit();
-		tempJarFile = new JarFile(tempFile);
 	}
 
 	/**
