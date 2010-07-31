@@ -131,10 +131,10 @@ public class ContainerInserter implements ClientPutState {
 			if(cancelled) return;
 			cancelled = true;
 		}
-		if(persistent)
+		if (persistent) {
 			container.store(this);
-		if(persistent)
 			container.activate(cb, 1);
+		}
 		// Must call onFailure so get removeFrom()'ed
 		cb.onFailure(new InsertException(InsertException.CANCELLED), this, container, context);
 	}
