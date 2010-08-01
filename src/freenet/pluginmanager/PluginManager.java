@@ -350,7 +350,7 @@ public class PluginManager {
 
 		File[] roots = File.listRoots();
 		for(File f : roots) {
-			if(pluginname.startsWith(f.getName()) && new File(pluginname).exists()) {
+			if(pluginname.startsWith(f.getName())) {
 				return startPluginFile(pluginname, store);
 			}
 		}
