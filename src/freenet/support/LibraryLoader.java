@@ -71,7 +71,7 @@ public class LibraryLoader {
 
 				// Finally, load the dll
 				System.out.println("Attempting to load the "+libraryName+" library ["+resource+']');
-				System.load(temporaryLib.getPath());
+				System.load(temporaryLib.getAbsolutePath());
 				success = true;
 			} catch(Throwable e) {
 				System.err.println("Caught the following exception attempting to load "+resourceName);
