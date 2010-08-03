@@ -410,7 +410,7 @@ public class NativeBigInteger extends BigInteger {
 				throw ule;
 		} finally {
 			Closer.close(fos);
-			f.delete();
+			//f.delete();
 		}
 
 		return false;
@@ -451,7 +451,7 @@ public class NativeBigInteger extends BigInteger {
 					return true;
 			} catch(IOException e) {
 			} finally {
-				if(temp != null) temp.delete();
+				//if(temp != null) temp.delete();
 			}
 			Logger.error(NativeBigInteger.class, "Can't load from " + System.getProperty("java.io.tmpdir"));
 			System.err.println("Can't load from " + System.getProperty("java.io.tmpdir"));
@@ -465,7 +465,7 @@ public class NativeBigInteger extends BigInteger {
 			Logger.error(NativeBigInteger.class, "Library " + resourceName + " is not appropriate for this system.");
 			System.err.println("Library " + resourceName + " is not appropriate for this system.");
 		} finally {
-			if(temp != null) temp.delete();
+			//if(temp != null) temp.delete();
 		}
 
 		return false;
