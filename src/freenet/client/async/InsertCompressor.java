@@ -62,7 +62,23 @@ public class InsertCompressor implements CompressJob {
 			}
 		});
 	}
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private InsertCompressor() {
+		nodeDBHandle = 0;
+		pre1254 = false;
+		persistent = false;
+		origData = null;
+		minSize = 0;
+		inserter = null;
+		generateHashes = 0;
+		compressorDescriptor = null;
+		bucketFactory = null;
+	}
+
 	public InsertCompressor(long nodeDBHandle2, SingleFileInserter inserter2, Bucket origData2, int minSize2, BucketFactory bf, boolean persistent, long generateHashes, boolean pre1254) {
 		this.nodeDBHandle = nodeDBHandle2;
 		this.inserter = inserter2;

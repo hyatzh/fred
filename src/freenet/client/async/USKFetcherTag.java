@@ -41,7 +41,21 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 	private boolean finished;
 	private final boolean ownFetchContext;
 	private final boolean checkStoreOnly;
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	private USKFetcherTag() {
+		nodeDBHandle = 0;
+		callback = null;
+		persistent = false;
+		ownFetchContext = false;
+		origUSK = null;
+		keepLastData = false;
+		ctx = null;
+		checkStoreOnly = false;
+	}
+
 	private USKFetcherTag(USK origUSK, USKFetcherCallback callback, long nodeDBHandle, boolean persistent, ObjectContainer container, FetchContext ctx, boolean keepLastData, long token, boolean hasOwnFetchContext, boolean checkStoreOnly) {
 		this.nodeDBHandle = nodeDBHandle;
 		this.callback = callback;

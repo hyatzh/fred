@@ -91,6 +91,18 @@ public class InsertContext implements Cloneable {
 		this.compatibilityMode = mode.ordinal();
 	}
 
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private InsertContext() {
+		splitfileSegmentDataBlocks = 0;
+		splitfileSegmentCheckBlocks = 0;
+		splitfileAlgorithm = 0;
+		eventProducer = null;
+		consecutiveRNFsCountAsSuccess = 0;
+	}
+
 	public InsertContext(
 			int maxRetries, int rnfsToSuccess, int splitfileSegmentDataBlocks, int splitfileSegmentCheckBlocks,
 			ClientEventProducer eventProducer, boolean canWriteClientCache, boolean forkOnCacheable, boolean localRequestOnly, String compressorDescriptor, int extraInsertsSingleBlock, int extraInsertsSplitfileHeaderBlock, CompatibilityMode compatibilityMode) {

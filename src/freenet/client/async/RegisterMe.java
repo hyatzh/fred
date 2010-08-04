@@ -19,7 +19,21 @@ public class RegisterMe {
 	final long bootID;
 	private final int hashCode;
 	public final BlockSet blocks;
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private RegisterMe() {
+		priority = 0;
+		nonGetRequest = null;
+		hashCode = 0;
+		core = null;
+		bootID = 0;
+		blocks = null;
+		addedTime = 0;
+	}
+
 	RegisterMe(SendableRequest nonGetRequest, short prio, ClientRequestSchedulerCore core, BlockSet blocks, long bootID) {
 		this.bootID = bootID;
 		this.core = core;

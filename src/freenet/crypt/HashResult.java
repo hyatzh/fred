@@ -13,7 +13,16 @@ public class HashResult implements Comparable {
 
 	public final HashType type;
 	public final byte[] result;
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private HashResult() {
+		type = null;
+		result = null;
+	}
+
 	public HashResult(HashType hashType, byte[] bs) {
 		this.type = hashType;
 		this.result = bs;

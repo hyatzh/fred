@@ -75,7 +75,16 @@ abstract class ClientRequestSchedulerBase {
 	protected transient ArrayList<KeyListener> keyListeners;
 
 	abstract boolean persistent();
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	protected ClientRequestSchedulerBase() {
+		priorities = null;
+		isSSKScheduler = false;
+		isInsertScheduler = false;
+	}
+
 	protected ClientRequestSchedulerBase(boolean forInserts, boolean forSSKs, RandomSource random) {
 		this.isInsertScheduler = forInserts;
 		this.isSSKScheduler = forSSKs;

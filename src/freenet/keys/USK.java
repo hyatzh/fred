@@ -41,6 +41,19 @@ public class USK extends BaseClientKey {
 	
 	private final int hashCode;
 
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private USK() {
+		pubKeyHash = null;
+		cryptoKey = null;
+		siteName = null;
+		suggestedEdition = 0;
+		hashCode = 0;
+		cryptoAlgorithm = 0;
+	}
+
 	public USK(byte[] pubKeyHash, byte[] cryptoKey, byte[] extra, String siteName, long suggestedEdition) throws MalformedURLException {
 		this.pubKeyHash = pubKeyHash;
 		this.cryptoKey = cryptoKey;

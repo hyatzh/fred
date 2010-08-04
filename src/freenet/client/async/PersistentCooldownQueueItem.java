@@ -19,7 +19,19 @@ public class PersistentCooldownQueueItem {
 	final String keyAsBytes;
 	final long time;
 	final PersistentCooldownQueue parent;
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private PersistentCooldownQueueItem() {
+		time = 0;
+		parent = null;
+		keyAsBytes = null;
+		key = null;
+		client = null;
+	}
+
 	PersistentCooldownQueueItem(SendableGet client, Key key, long time, PersistentCooldownQueue parent) {
 		this.client = client;
 		this.key = key;

@@ -18,7 +18,14 @@ public class InsertBlock {
 	private boolean isFreed;
 	public FreenetURI desiredURI;
 	public ClientMetadata clientMetadata;
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private InsertBlock() {
+	}
+
 	public InsertBlock(Bucket data, ClientMetadata metadata, FreenetURI desiredURI) {
 		if(data == null) throw new NullPointerException();
 		this.data = data;

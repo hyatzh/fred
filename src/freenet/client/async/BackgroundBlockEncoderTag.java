@@ -8,7 +8,18 @@ class BackgroundBlockEncoderTag {
 	final long addedTime;
 	/** For implementing priority ordering */
 	final short priority;
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private BackgroundBlockEncoderTag() {
+		priority = 0;
+		nodeDBHandle = 0;
+		inserter = null;
+		addedTime = 0;
+	}
+
 	BackgroundBlockEncoderTag(Encodeable inserter, short prio, ClientContext context) {
 		this.inserter = inserter;
 		this.nodeDBHandle = context.nodeDBHandle;

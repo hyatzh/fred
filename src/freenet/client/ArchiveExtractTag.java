@@ -15,7 +15,21 @@ class ArchiveExtractTag {
 	final String element;
 	final ArchiveExtractCallback callback;
 	final long nodeDBHandle;
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private ArchiveExtractTag() {
+		nodeDBHandle = 0;
+		handler = null;
+		freeBucket = false;
+		element = null;
+		data = null;
+		callback = null;
+		actx = null;
+	}
+
 	ArchiveExtractTag(ArchiveHandlerImpl handler, Bucket data, boolean freeBucket, ArchiveContext actx, String element, ArchiveExtractCallback callback, long nodeDBHandle) {
 		if(handler == null) throw new NullPointerException();
 		this.handler = handler;

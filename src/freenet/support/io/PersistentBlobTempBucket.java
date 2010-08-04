@@ -37,6 +37,16 @@ public class PersistentBlobTempBucket implements Bucket {
 		return hashCode;
 	}
 
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private PersistentBlobTempBucket() {
+		hashCode = 0;
+		factory = null;
+		blockSize = 0;
+	}
+
 	public PersistentBlobTempBucket(PersistentBlobTempBucketFactory factory2, long blockSize2, long slot, PersistentBlobTempBucketTag tag, boolean shadow) {
 		factory = factory2;
 		blockSize = blockSize2;

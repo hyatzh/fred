@@ -46,7 +46,28 @@ public class FECJob {
 	public int hashCode() {
 		return hashCode;
 	}
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private FECJob() {
+		queue = null;
+		priority = 0;
+		persistent = false;
+		isADecodingJob = false;
+		hashCode = 0;
+		fecAlgo = 0;
+		dataBlocks = null;
+		dataBlockStatus = null;
+		checkBlocks = null;
+		checkBlockStatus = null;
+		callback = null;
+		bucketFactory = null;
+		blockLength = 0;
+		addedTime = 0;
+	}
+
 	public FECJob(FECCodec codec, FECQueue queue, SplitfileBlock[] dataBlockStatus, SplitfileBlock[] checkBlockStatus,  int blockLength, BucketFactory bucketFactory, FECCallback callback, boolean isADecodingJob, short priority, boolean persistent) {
 		this.codec = codec;
 		this.fecAlgo = codec.getAlgorithm();

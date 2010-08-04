@@ -71,6 +71,16 @@ public class PersistentTempBucketFactory implements BucketFactory, PersistentFil
 	private transient boolean modifiedBucketsToFree;
 
 	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private PersistentTempBucketFactory() {
+		nodeDBHandle = 0;
+		fg = null;
+		bucketsToFree = null;
+		blobFactory = null;
+	}
+	/**
 	 * Create a temporary bucket factory.
 	 * @param dir Where to put it.
 	 * @param prefix Prefix for temporary file names.

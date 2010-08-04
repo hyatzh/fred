@@ -28,7 +28,22 @@ import freenet.support.Logger.LogLevel;
  */
 // WARNING: THIS CLASS IS STORED IN DB4O -- THINK TWICE BEFORE ADD/REMOVE/RENAME FIELDS
 public class FCPClient {
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private FCPClient() {
+		name = null;
+		runningPersistentRequests = null;
+		root = null;
+		persistenceType = 0;
+		lowLevelClient = null;
+		isGlobalQueue = false;
+		completedUnackedRequests = null;
+		clientRequestsByIdentifier = null;
+	}
+
 	public FCPClient(String name2, FCPConnectionHandler handler, boolean isGlobalQueue, RequestCompletionCallback cb, short persistenceType, FCPPersistentRoot root, Whiteboard whiteboard,ObjectContainer container) {
 		this.name = name2;
 		if(name == null) throw new NullPointerException();

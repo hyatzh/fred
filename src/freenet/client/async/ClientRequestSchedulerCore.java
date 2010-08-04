@@ -82,6 +82,16 @@ class ClientRequestSchedulerCore extends ClientRequestSchedulerBase {
 		return core;
 	}
 
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private ClientRequestSchedulerCore() {
+		persistentCooldownQueue = null;
+		nodeDBHandle = 0;
+		globalSalt = null;
+	}
+
 	ClientRequestSchedulerCore(Node node, boolean forInserts, boolean forSSKs, ObjectContainer selectorContainer, long cooldownTime) {
 		super(forInserts, forSSKs, node.random);
 		this.nodeDBHandle = node.nodeDBHandle;
