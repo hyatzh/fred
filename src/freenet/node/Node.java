@@ -3811,6 +3811,8 @@ public class Node implements TimeSkewDetectorCallback {
 
 		} else if (jvmVendor.startsWith("Apple ") || jvmVendor.startsWith("\"Apple ")) {
 			//Note that Sun does not produce VMs for the Macintosh operating system, dont ask the user to find one...
+		} else if (jvmName.equalsIgnoreCase("JamVM")) {
+			// w00t.
 		} else {
 			if(jvmVendor.startsWith("Free Software Foundation")) {
 				try {
