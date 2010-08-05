@@ -135,7 +135,41 @@ public class SplitFileFetcher implements ClientGetState, HasKeyListener {
 
 	private final int crossCheckBlocks;
 	private final SplitFileFetcherCrossSegment[] crossSegments;
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private SplitFileFetcher() {
+		splitfileType = 0;
+		segments = null;
+		segmentCount = 0;
+		returnBucket = null;
+		recursionLevel = 0;
+		persistent = false;
+		perSegmentK = 0;
+		perSegmentBloomFilterSizeBytes = 0;
+		parent = null;
+		overrideLength = 0;
+		maxTempLength = 0;
+		mainBloomK = 0;
+		mainBloomFilterSizeBytes = 0;
+		localSalt = null;
+		hashCode = 0;
+		fetchContext = null;
+		deleteFetchContext = false;
+		deductBlocksFromSegments = 0;
+		decompressors = null;
+		crossSegments = null;
+		crossCheckBlocks = 0;
+		clientMetadata = null;
+		checkBlocksPerSegment = 0;
+		cb = null;
+		blocksPerSegment = 0;
+		blockFetchContext = null;
+		archiveContext = null;
+	}
+
 	public SplitFileFetcher(Metadata metadata, GetCompletionCallback rcb, ClientRequester parent2,
 			FetchContext newCtx, boolean deleteFetchContext, List<? extends Compressor> decompressors2, ClientMetadata clientMetadata,
 			ArchiveContext actx, int recursionLevel, Bucket returnBucket, long token2, boolean topDontCompress, short topCompatibilityMode, ObjectContainer container, ClientContext context) throws FetchException, MetadataParseException {

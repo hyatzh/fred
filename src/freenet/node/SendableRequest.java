@@ -26,7 +26,15 @@ public abstract class SendableRequest implements RandomGrabArrayItem {
 	
 	// Since we put these into Set's etc, hashCode must be persistent.
 	private final int hashCode;
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	protected SendableRequest() {
+		persistent = false;
+		hashCode = 0;
+	}
+
 	SendableRequest(boolean persistent) {
 		this.persistent = persistent;
 		this.hashCode = super.hashCode();

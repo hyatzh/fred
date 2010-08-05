@@ -13,7 +13,17 @@ public class ExpectedHashes extends FCPMessage {
 	final HashResult[] hashes;
 	final String identifier;
 	final boolean global;
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private ExpectedHashes() {
+		identifier = null;
+		hashes = null;
+		global = false;
+	}
+
 	public ExpectedHashes(ExpectedHashesEvent event, String identifier, boolean global) {
 		this.identifier = identifier;
 		this.global = global;

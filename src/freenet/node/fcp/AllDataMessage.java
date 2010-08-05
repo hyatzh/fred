@@ -21,7 +21,20 @@ public class AllDataMessage extends DataCarryingMessage {
 	final String identifier;
 	final long startupTime, completionTime;
 	final String mimeType;
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private AllDataMessage() {
+		startupTime = 0;
+		completionTime = 0;
+		mimeType = null;
+		identifier = null;
+		global = false;
+		dataLength = 0;
+	}
+
 	public AllDataMessage(Bucket bucket, String identifier, boolean global, long startupTime, long completionTime, String mimeType) {
 		this.bucket = bucket;
 		this.dataLength = bucket.size();

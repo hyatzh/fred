@@ -32,7 +32,15 @@ public class DelayedFreeBucket implements Bucket, SerializableToFieldSetBucket {
 	public boolean toRemove() {
 		return removed;
 	}
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private DelayedFreeBucket() {
+		factory = null;
+	}
+
 	public DelayedFreeBucket(PersistentTempBucketFactory factory, Bucket bucket) {
 		this.factory = factory;
 		this.bucket = bucket;

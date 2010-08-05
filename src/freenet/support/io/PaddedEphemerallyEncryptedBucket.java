@@ -39,7 +39,18 @@ public class PaddedEphemerallyEncryptedBucket implements Bucket, SerializableToF
 	private long dataLength;
 	private boolean readOnly;
 	private int lastOutputStream;
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private PaddedEphemerallyEncryptedBucket() {
+		randomSeed = null;
+		minPaddedSize = 0;
+		key = null;
+		bucket = null;
+	}
+
 	/**
 	 * Create a padded encrypted proxy bucket.
 	 * @param bucket The bucket which we are proxying to. Must be empty.

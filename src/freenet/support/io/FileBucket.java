@@ -28,6 +28,16 @@ public class FileBucket extends BaseFileBucket implements Bucket, SerializableTo
 	// need to track it ourselves
 
 	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private FileBucket() {
+		file = null;
+		deleteOnExit = false;
+		createFileOnly = false;
+	}
+
+	/**
 	 * Creates a new FileBucket.
 	 * 
 	 * @param file The File to read and write to.

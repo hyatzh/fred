@@ -85,6 +85,19 @@ public class ClientGet extends ClientRequest implements ClientGetCallback, Clien
 	private ExpectedHashes expectedHashes;
 
 	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private ClientGet() {
+		tempFile = null;
+		targetFile = null;
+		returnType = 0;
+		getter = null;
+		fctx = null;
+		binaryBlob = false;
+	}
+
+	/**
 	 * Create one for a global-queued request not made by FCP.
 	 * @throws IdentifierCollisionException
 	 * @throws NotAllowedException

@@ -52,6 +52,14 @@ public abstract class SendableGet extends BaseSendableGet {
 
 	// Implementation
 
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	protected SendableGet() {
+		parent = null;
+	}
+
 	public SendableGet(ClientRequester parent) {
 		super(parent.persistent());
 		this.parent = parent;

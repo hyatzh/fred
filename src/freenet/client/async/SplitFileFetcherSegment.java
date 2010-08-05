@@ -145,6 +145,41 @@ public class SplitFileFetcherSegment implements FECCallback {
 	}
 	
 	private transient FECCodec codec;
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private SplitFileFetcherSegment() {
+		subSegments = null;
+		splitfileType = 0;
+		segNum = 0;
+		recursionLevel = 0;
+		pre1254 = false;
+		persistent = false;
+		parentFetcher = null;
+		parent = null;
+		minFetched = 0;
+		maxBlockLength = 0;
+		ignoreLastDataBlock = false;
+		hashCode = 0;
+		forceCryptoKey = null;
+		errors = null;
+		dataRetries = null;
+		dataKeys = null;
+		dataCooldownTimes = null;
+		dataBuckets = null;
+		cryptoAlgorithm = 0;
+		crossSegmentsByBlock = null;
+		crossCheckBlocks = 0;
+		checkRetries = null;
+		checkKeys = null;
+		checkCooldownTimes = null;
+		checkBuckets = null;
+		blockFetchContext = null;
+		archiveContext = null;
+	}
+
 	
 	public SplitFileFetcherSegment(short splitfileType, ClientCHK[] splitfileDataKeys, ClientCHK[] splitfileCheckKeys, SplitFileFetcher fetcher, ArchiveContext archiveContext, FetchContext blockFetchContext, long maxTempLength, int recursionLevel, ClientRequester requester, int segNum, boolean ignoreLastDataBlock, boolean pre1254, int crossCheckBlocks, byte cryptoAlgorithm, byte[] forceCryptoKey) throws MetadataParseException, FetchException {
 		this.crossCheckBlocks = crossCheckBlocks;

@@ -7,7 +7,13 @@ import freenet.keys.Key;
 
 // WARNING: THIS CLASS IS STORED IN DB4O -- THINK TWICE BEFORE ADD/REMOVE/RENAME FIELDS
 public abstract class BaseSendableGet extends SendableRequest {
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	protected BaseSendableGet() {
+	}
+
 	protected BaseSendableGet(boolean persistent) {
 		super(persistent);
 	}

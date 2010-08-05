@@ -30,7 +30,26 @@ public class GetFailedMessage extends FCPMessage {
 	final String expectedMimeType;
 	final boolean finalizedExpected;
 	final FreenetURI redirectURI;
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private GetFailedMessage() {
+		code = 0;
+		codeDescription = null;;
+		shortCodeDescription = null;
+		extraDescription = null;
+		tracker = null;
+		isFatal = false;
+		identifier = null;;
+		global = false;
+		expectedDataLength = 0;
+		expectedMimeType = null;;
+		finalizedExpected = false;
+		redirectURI = null;
+	}
+
 	public GetFailedMessage(FetchException e, String identifier, boolean global) {
 		if(Logger.shouldLog(LogLevel.MINOR, this))
 			Logger.minor(this, "Creating get failed from "+e+" for "+identifier, e);

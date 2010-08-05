@@ -81,6 +81,23 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 	private final SnoopMetadata metaSnoop;
 	private final SnoopBucket bucketSnoop;
 
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private SingleFileFetcher() {
+		uri = null;
+		returnBucket = null;
+		metaStrings = null;
+		metaSnoop = null;
+		bucketSnoop = null;
+		isFinal = false;
+		dontTellClientGet = false;
+		decompressors = null;
+		clientMetadata = null;
+		actx = null;
+	}
+
 	/** Create a new SingleFileFetcher and register self.
 	 * Called when following a redirect, or direct from ClientGet.
 	 * FIXME: Many times where this is called internally we might be better off using a copy constructor? 
@@ -767,7 +784,7 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 				if(logMINOR) Logger.minor(this, "Is multi-level metadata");
 				// Fetch on a second SingleFileFetcher, like with archives.
 				metadata.setSimpleRedirect();
-				final SingleFileFetcher f = new SingleFileFetcher(this, persistent, false, metadata, new MultiLevelMetadataCallback(), ctx, container, context);
+				final SingleFileFetcher f = new SingleFileFetcher(this, persistent, false, metadata, new MultiLevelMetadataCallback(persistent), ctx, container, context);
 				// Clear our own metadata so it can be garbage collected, it will be replaced by whatever is fetched.
 				// The new fetcher has our metadata so we don't need to removeMetadata().
 				this.metadata = null;
@@ -1196,11 +1213,19 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 	}
 
 	class MultiLevelMetadataCallback implements GetCompletionCallback {
-		
+
 		private final boolean persistent;
-		
-		MultiLevelMetadataCallback() {
-			this.persistent = SingleFileFetcher.this.persistent;
+
+		/**
+		 * zero arg c'tor for db4o on jamvm
+		 */
+		@SuppressWarnings("unused")
+		private MultiLevelMetadataCallback() {
+			persistent = false;
+		}
+
+		MultiLevelMetadataCallback(boolean persistent) {
+			this.persistent = persistent;
 		}
 		
 		public void onSuccess(FetchResult result, ClientGetState state, ObjectContainer container, ClientContext context) {

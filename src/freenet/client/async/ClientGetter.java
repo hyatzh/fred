@@ -95,6 +95,19 @@ public class ClientGetter extends BaseClientGetter {
 	private HashResult[] hashes;
 
 	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private ClientGetter() {
+		returnBucket = null;
+		ctx = null;
+		clientCallback = null;
+		binaryBlobKeysAddedAlready = null;
+		binaryBlobBucket = null;
+		actx = null;
+	}
+
+	/**
 	 * Fetch a key.
 	 * @param client The callback we will call when it is completed.
 	 * @param uri The URI to fetch.

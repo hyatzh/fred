@@ -63,7 +63,18 @@ public class FetchException extends Exception {
 	public int getMode() {
 		return mode;
 	}
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private FetchException() {
+		newURI = null;
+		mode = 0;
+		extraMessage = null;
+		errorCodes = null;
+	}
+
 	public FetchException(int m) {
 		super(getMessage(m));
 		if(m == 0)

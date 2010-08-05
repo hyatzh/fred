@@ -9,6 +9,13 @@ import freenet.support.api.Bucket;
 
 public class PersistentTempFileBucket extends TempFileBucket {
 
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private PersistentTempFileBucket() {
+	}
+
 	public PersistentTempFileBucket(long id, FilenameGenerator generator) {
 		this(id, generator, true);
 	}

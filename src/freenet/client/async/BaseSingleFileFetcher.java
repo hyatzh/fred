@@ -44,6 +44,15 @@ public abstract class BaseSingleFileFetcher extends SendableGet implements HasKe
 		Logger.registerClass(BaseManifestPutter.class);
 	}
 
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	protected BaseSingleFileFetcher() {
+		maxRetries = 0;
+		key = null;
+		ctx = null;
+	}
+
 	protected BaseSingleFileFetcher(ClientKey key, int maxRetries, FetchContext ctx, ClientRequester parent, boolean deleteFetchContext) {
 		super(parent);
 		this.deleteFetchContext = deleteFetchContext;

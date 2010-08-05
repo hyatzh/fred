@@ -43,7 +43,20 @@ public class ClientCHK extends ClientKey {
     static final short EXTRA_LENGTH = 5;
     /** The length of the decryption key */
     static final short CRYPTO_KEY_LENGTH = 32;
-    
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private ClientCHK() {
+		routingKey = null;
+		cryptoKey = null;
+		cryptoAlgorithm = 0;
+		controlDocument = false;
+		compressionAlgorithm = 0;
+		hashCode = 0;
+	}
+
     private ClientCHK(ClientCHK key) {
     	this.routingKey = new byte[key.routingKey.length];
     	System.arraycopy(key.routingKey, 0, routingKey, 0, key.routingKey.length);

@@ -48,6 +48,12 @@ public abstract class BaseFileBucket implements Bucket, SerializableToFieldSetBu
 	protected static String tempDir = null;
 
 	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	protected BaseFileBucket() {
+	}
+
+	/**
 	 * Constructor.
 	 * @param file
 	 * @param deleteOnExit If true, call File.deleteOnExit() on the file. 

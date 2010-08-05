@@ -30,6 +30,14 @@ import freenet.support.api.Bucket;
  */
 public class SimpleSingleFileFetcher extends BaseSingleFileFetcher implements ClientGetState {
 
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	protected SimpleSingleFileFetcher() {
+		token = 0;
+		rcb = null;
+	}
+
 	SimpleSingleFileFetcher(ClientKey key, int maxRetries, FetchContext ctx, ClientRequester parent, 
 			GetCompletionCallback rcb, boolean isEssential, boolean dontAdd, long l, ObjectContainer container, ClientContext context, boolean deleteFetchContext) {
 		super(key, maxRetries, ctx, parent, deleteFetchContext);

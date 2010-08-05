@@ -7,7 +7,13 @@ import freenet.node.RequestClient;
 
 public abstract class BaseClientGetter extends ClientRequester implements
 		GetCompletionCallback {
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	protected BaseClientGetter() {
+	}
+
 	protected BaseClientGetter(short priorityClass, RequestClient client) {
 		super(priorityClass, client);
 	}

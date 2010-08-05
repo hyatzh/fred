@@ -26,6 +26,15 @@ public class TempFileBucket extends BaseFileBucket implements Bucket, Serializab
 	private static boolean logDebug = true;
 	private boolean readOnly;
 	private final boolean deleteOnFree;
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	protected TempFileBucket() {
+		generator = null;
+		deleteOnFree = false;
+	}
+
 	
 	public TempFileBucket(long id, FilenameGenerator generator) {
 		// deleteOnExit -> files get stuck in a big HashSet, whether or not

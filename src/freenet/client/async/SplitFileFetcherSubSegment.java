@@ -73,7 +73,18 @@ public class SplitFileFetcherSubSegment extends SendableGet implements SupportsB
 		}
 		return false;
 	}
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private SplitFileFetcherSubSegment() {
+		segment = null;
+		retryCount = 0;
+		ctx = null;
+		blockNums = null;
+	}
+
 	SplitFileFetcherSubSegment(SplitFileFetcherSegment segment, ClientRequester parent, int retryCount) {
 		super(parent);
 		this.segment = segment;
