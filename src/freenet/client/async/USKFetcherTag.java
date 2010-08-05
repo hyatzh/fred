@@ -41,6 +41,7 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 	private boolean finished;
 	private final boolean ownFetchContext;
 	private final boolean checkStoreOnly;
+	private final int hashCode;
 
 	/**
 	 * zero arg c'tor for db4o on jamvm
@@ -54,6 +55,7 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 		keepLastData = false;
 		ctx = null;
 		checkStoreOnly = false;
+		hashCode = 0;
 	}
 
 	private USKFetcherTag(USK origUSK, USKFetcherCallback callback, long nodeDBHandle, boolean persistent, ObjectContainer container, FetchContext ctx, boolean keepLastData, long token, boolean hasOwnFetchContext, boolean checkStoreOnly) {
@@ -70,6 +72,12 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 		pollingPriorityProgress = callback.getPollingPriorityProgress();
 		priority = pollingPriorityNormal;
 		this.checkStoreOnly = checkStoreOnly;
+		this.hashCode = super.hashCode();
+		if(logMINOR) Logger.minor(this, "Created tag for "+origUSK+" and "+callback+" : "+this);
+	}
+	
+	public int hashCode() {
+		return hashCode;
 	}
 	
 	/**
@@ -121,6 +129,7 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 		fetcher = manager.getFetcher(usk, ctx, new USKFetcherWrapper(usk, priority, client), keepLastData, checkStoreOnly);
 		fetcher.addCallback(this);
 		fetcher.schedule(null, context); // non-persistent
+		if(logMINOR) Logger.minor(this, "Starting "+fetcher+" for "+this);
 	}
 
 	public void cancel(ObjectContainer container, ClientContext context) {
@@ -128,6 +137,7 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 		synchronized(this) {
 			finished = true;
 		}
+		if(logMINOR) Logger.minor(this, "Cancelled "+this);
 		// onCancelled() will removeFrom(), so we do NOT want to store(this)
 	}
 
@@ -140,6 +150,7 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 	}
 
 	public void onCancelled(ObjectContainer container, ClientContext context) {
+		if(logMINOR) Logger.minor(this, "Cancelled on "+this);
 		synchronized(this) {
 			finished = true;
 		}
@@ -152,6 +163,8 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 
 					public boolean run(ObjectContainer container, ClientContext context) {
 						container.activate(callback, 1);
+						if(callback instanceof USKFetcherTagCallback)
+							((USKFetcherTagCallback)callback).setTag(USKFetcherTag.this, container, context);
 						callback.onCancelled(container, context);
 						removeFrom(container, context);
 						container.deactivate(callback, 1);
@@ -168,12 +181,19 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 	}
 
 	public void onFailure(ObjectContainer container, ClientContext context) {
+		if(logMINOR) Logger.minor(this, "Failed on "+this);
 		synchronized(this) {
+			if(finished) {
+				Logger.error(this, "onFailure called after finish on "+this, new Exception("error"));
+				return;
+			}
 			finished = true;
 		}
 		if(persistent) {
 			if(container != null) {
 				container.activate(callback, 1);
+				if(callback instanceof USKFetcherTagCallback)
+					((USKFetcherTagCallback)callback).setTag(USKFetcherTag.this, container, context);
 				callback.onFailure(container, context);
 				container.deactivate(callback, 1);
 				removeFrom(container, context);
@@ -184,6 +204,8 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 					public boolean run(ObjectContainer container, ClientContext context) {
 						container.activate(USKFetcherTag.this, 1);
 						container.activate(callback, 1);
+						if(callback instanceof USKFetcherTagCallback)
+							((USKFetcherTagCallback)callback).setTag(USKFetcherTag.this, container, context);
 						callback.onFailure(container, context);
 						container.deactivate(callback, 1);
 						removeFrom(container, context);
@@ -209,9 +231,14 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 	}
 
 	public void onFoundEdition(final long l, final USK key, ObjectContainer container, ClientContext context, final boolean metadata, final short codec, final byte[] data, final boolean newKnownGood, final boolean newSlotToo) {
+		if(logMINOR) Logger.minor(this, "Found edition "+l+" on "+this);
 		synchronized(this) {
 			if(fetcher == null) {
 				Logger.error(this, "onFoundEdition but fetcher is null - isn't onFoundEdition() terminal for USKFetcherCallback's??", new Exception("debug"));
+			}
+			if(finished) {
+				Logger.error(this, "onFoundEdition called after finish on "+this, new Exception("error"));
+				return;
 			}
 			finished = true;
 			fetcher = null;
@@ -219,6 +246,8 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 		if(persistent) {
 			if(container != null) {
 				container.activate(callback, 1);
+				if(callback instanceof USKFetcherTagCallback)
+					((USKFetcherTagCallback)callback).setTag(USKFetcherTag.this, container, context);
 				callback.onFoundEdition(l, key, container, context, metadata, codec, data, newKnownGood, newSlotToo);
 				container.deactivate(callback, 1);
 				removeFrom(container, context);
@@ -228,6 +257,8 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 
 					public boolean run(ObjectContainer container, ClientContext context) {
 						container.activate(callback, 1);
+						if(callback instanceof USKFetcherTagCallback)
+							((USKFetcherTagCallback)callback).setTag(USKFetcherTag.this, container, context);
 						callback.onFoundEdition(l, key, container, context, metadata, codec, data, newKnownGood, newSlotToo);
 						container.deactivate(callback, 1);
 						removeFrom(container, context);
