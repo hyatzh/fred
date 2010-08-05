@@ -167,6 +167,7 @@ import freenet.support.api.IntCallback;
 import freenet.support.api.LongCallback;
 import freenet.support.api.ShortCallback;
 import freenet.support.api.StringCallback;
+import freenet.support.db4o.FileTranslator;
 import freenet.support.io.ArrayBucketFactory;
 import freenet.support.io.Closer;
 import freenet.support.io.FileUtil;
@@ -2673,6 +2674,9 @@ public class Node implements TimeSkewDetectorCallback {
 		// Make db4o throw an exception if we call store for something for which we do not have to call it, String or Date for example.
 		// This prevents us from writing code which is based on misunderstanding of db4o internals...
 		dbConfig.exceptionsOnNotStorable(true);
+
+		// add a translator for java.io.File
+		dbConfig.objectClass(File.class).translate(new FileTranslator());
 
 		System.err.println("Optimise native queries: "+dbConfig.optimizeNativeQueries());
 		System.err.println("Query activation depth: "+dbConfig.activationDepth());
