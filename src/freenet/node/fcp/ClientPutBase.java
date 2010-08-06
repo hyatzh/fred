@@ -64,6 +64,16 @@ public abstract class ClientPutBase extends ClientRequest implements ClientPutCa
 	public final static String SALT = "Salt";
 	public final static String FILE_HASH = "FileHash";
 
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	protected ClientPutBase() {
+		publicURI = null;
+		getCHKOnly = false;
+		earlyEncode = false;
+		ctx = null;
+	}
+
 	public ClientPutBase(FreenetURI uri, String identifier, int verbosity, String charset, 
 			FCPConnectionHandler handler, short priorityClass, short persistenceType, String clientToken, boolean global,
 			boolean getCHKOnly, boolean dontCompress, boolean localRequestOnly, int maxRetries, boolean earlyEncode, boolean canWriteClientCache, boolean forkOnCacheable, String compressorDescriptor, int extraInsertsSingleBlock, int extraInsertsSplitfileHeader, InsertContext.CompatibilityMode compatibilityMode, FCPServer server, ObjectContainer container) throws MalformedURLException {

@@ -54,7 +54,20 @@ public class ClientPut extends ClientPutBase {
 	/** If true, we are inserting a binary blob: No metadata, no URI is generated. */
 	private final boolean binaryBlob;
 	private transient boolean compressing;
-	
+
+	/**
+	 * zero arg c'tor for db4o on jamvm
+	 */
+	@SuppressWarnings("unused")
+	private ClientPut() {
+		uploadFrom = 0;
+		targetURI = null;
+		targetFilename = null;
+		origFilename = null;
+		clientMetadata = null;
+		binaryBlob = false;
+	}
+
 	/**
 	 * Fproxy
 	 * Creates a new persistent insert.
