@@ -968,6 +968,12 @@ public class SplitFileFetcherSegment implements FECCallback {
 		
 		// Encode any check blocks we don't have
 		try {
+			synchronized(this) {
+				if(encoderFinished) {
+					Logger.error(this, "Encoder finished in onDecodedSegment at end??? on "+this);
+					return; // Calling addToQueue now will NPE.
+				}
+			}
 		codec.addToQueue(new FECJob(codec, context.fecQueue, dataBuckets, checkBuckets, 32768, context.getBucketFactory(persistent), this, false, parent.getPriorityClass(), persistent),
 				context.fecQueue, container);
 		if(persistent) {
@@ -1795,7 +1801,7 @@ public class SplitFileFetcherSegment implements FECCallback {
 			}
 			if(finished || startedDecode || fetcherFinished) {
 				if(logMINOR) Logger.minor(this, "Rejecting block because "+(finished?"finished ":"")+(startedDecode?"started decode ":"")+(fetcherFinished?"fetcher finished ":""));
-				return true; // The block was present but we didn't want it.
+				return false; // The block was present but we didn't want it.
 			}
 			if(logMINOR)
 				Logger.minor(this, "Found key for block "+blockNum+" on "+this+" in onGotKey() for "+key);
