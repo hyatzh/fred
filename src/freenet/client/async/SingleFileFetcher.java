@@ -1341,11 +1341,6 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 		
 	}
 	
-	@Override
-	public boolean ignoreStore() {
-		return ctx.ignoreStore;
-	}
-
 	/**
 	 * Create a fetcher for a key.
 	 */
