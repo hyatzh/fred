@@ -5,6 +5,9 @@ package freenet.client.async;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
 import java.net.MalformedURLException;
 import java.util.ArrayList;
 import java.util.LinkedList;
@@ -36,9 +39,11 @@ import freenet.keys.FreenetURI;
 import freenet.keys.USK;
 import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
+import freenet.support.OOMHandler;
 import freenet.support.Logger.LogLevel;
 import freenet.support.api.Bucket;
-import freenet.support.compress.CompressionOutputSizeException;
+import freenet.support.compress.Compressor;
+import freenet.support.compress.DecompressorThreadManager;
 import freenet.support.compress.Compressor.COMPRESSOR_TYPE;
 import freenet.support.io.BucketTools;
 import freenet.support.io.Closer;
@@ -75,7 +80,6 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 	private FreenetURI thisKey;
 	private final LinkedList<COMPRESSOR_TYPE> decompressors;
 	private final boolean dontTellClientGet;
-	private final Bucket returnBucket;
 	/** If true, success/failure is immediately reported to the client, and therefore we can check TOO_MANY_PATH_COMPONENTS. */
 	private final boolean isFinal;
 	private final SnoopMetadata metaSnoop;
@@ -87,7 +91,6 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 	@SuppressWarnings("unused")
 	private SingleFileFetcher() {
 		uri = null;
-		returnBucket = null;
 		metaStrings = null;
 		metaSnoop = null;
 		bucketSnoop = null;
@@ -108,12 +111,11 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 			ClientKey key, List<String> metaStrings, FreenetURI origURI, int addedMetaStrings, FetchContext ctx, boolean deleteFetchContext,
 			ArchiveContext actx, ArchiveHandler ah, Metadata archiveMetadata, int maxRetries, int recursionLevel,
 			boolean dontTellClientGet, long l, boolean isEssential,
-			Bucket returnBucket, boolean isFinal, boolean topDontCompress, short topCompatibilityMode, ObjectContainer container, ClientContext context) throws FetchException {
+			boolean isFinal, boolean topDontCompress, short topCompatibilityMode, ObjectContainer container, ClientContext context) throws FetchException {
 		super(key, maxRetries, ctx, parent, cb, isEssential, false, l, container, context, deleteFetchContext);
 		if(logMINOR) Logger.minor(this, "Creating SingleFileFetcher for "+key+" from "+origURI+" meta="+metaStrings.toString()+" persistent="+persistent, new Exception("debug"));
 		this.isFinal = isFinal;
 		this.cancelled = false;
-		this.returnBucket = returnBucket;
 		this.dontTellClientGet = dontTellClientGet;
 		if(persistent && ah != null) ah = ah.cloneHandler();
 		this.ah = ah;
@@ -155,7 +157,6 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 		// Don't add a block, we have already fetched the data, we are just handling the metadata in a different fetcher.
 		super(persistent ? fetcher.key.cloneKey() : fetcher.key, fetcher.maxRetries, ctx2, fetcher.parent, callback, false, true, fetcher.token, container, context, deleteFetchContext);
 		if(logMINOR) Logger.minor(this, "Creating SingleFileFetcher for "+fetcher.key+" meta="+fetcher.metaStrings.toString(), new Exception("debug"));
-		this.returnBucket = null;
 		// We expect significant further processing in the parent
 		this.isFinal = false;
 		this.dontTellClientGet = fetcher.dontTellClientGet;
@@ -311,34 +312,6 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 			onFailure(new FetchException(FetchException.CANCELLED), false, container, context);
 			return;
 		}
-		if(!decompressors.isEmpty()) {
-			Bucket data = result.asBucket();
-			while(!decompressors.isEmpty()) {
-				COMPRESSOR_TYPE c = decompressors.removeLast();
-				try {
-					long maxLen = Math.max(ctx.maxTempLength, ctx.maxOutputLength);
-					if(logMINOR)
-						Logger.minor(this, "Decompressing "+data+" size "+data.size()+" max length "+maxLen);
-					Bucket out = decompressors.isEmpty() ? returnBucket : null;
-					data = c.decompress(data, context.getBucketFactory(parent.persistent()), maxLen, maxLen * 4, out);
-					if(logMINOR)
-						Logger.minor(this, "Decompressed to "+data+" size "+data.size());
-				} catch (IOException e) {
-					onFailure(new FetchException(FetchException.BUCKET_ERROR, e), false, container, context);
-					return;
-				} catch (CompressionOutputSizeException e) {
-					if(logMINOR)
-						Logger.minor(this, "Too big: limit="+ctx.maxOutputLength+" temp="+ctx.maxTempLength);
-					onFailure(new FetchException(FetchException.TOO_BIG, e.estimatedSize, (rcb == parent), result.getMimeType()), false, container, context);
-					return;
-				}
-			}
-			result = new FetchResult(result, data);
-			if(persistent) {
-				container.store(this);
-				container.store(decompressors);
-			}
-		}
 		if((!ctx.ignoreTooManyPathComponents) && (!metaStrings.isEmpty()) && isFinal) {
 			// Some meta-strings left
 			if(addedMetaStrings > 0) {
@@ -365,7 +338,7 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 			result.asBucket().free();
 			if(persistent) result.asBucket().removeFrom(container);
 		} else {
-			rcb.onSuccess(result, this, container, context);
+			rcb.onSuccess(new SingleFileStreamGenerator(result.asBucket(), persistent), result.getMetadata(), decompressors, this, container, context);
 		}
 	}
 
@@ -395,7 +368,6 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 			container.activate(actx, 5);
 			container.activate(clientMetadata, 5);
 			container.activate(rcb, 1);
-			container.activate(returnBucket, 5);
 		}
 		if(uri == null) {
 			if(container != null) {
@@ -700,11 +672,8 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 					final Bucket out;
 					try {
 						// Data will not be freed until client is finished with it.
-						if(returnBucket != null || persistent) {
-							if(returnBucket == null)
-								out = context.persistentBucketFactory.makeBucket(dataBucket.size());
-							else
-								out = returnBucket;
+						if(persistent) {
+							out = context.persistentBucketFactory.makeBucket(dataBucket.size());
 							BucketTools.copy(dataBucket, out);
 							dataBucket.free();
 						} else {
@@ -728,26 +697,11 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 							if(persistent)
 								container.activate(SingleFileFetcher.this, 1);
 							if(logMINOR) Logger.minor(this, "Returning data");
-							Bucket out;
-							try {
-								// Data will not be freed until client is finished with it.
-								if(returnBucket != null) {
-									if(persistent)
-										container.activate(returnBucket, 5);
-									out = returnBucket;
-									BucketTools.copy(data, out);
-									data.free();
-									if(persistent)
-										data.removeFrom(container);
-								} else {
-									out = data;
-								}
-							} catch (IOException e) {
-								onFailure(new FetchException(FetchException.BUCKET_ERROR), false, container, context);
-								return;
-							}
-							// Return the data
-							onSuccess(new FetchResult(clientMetadata, out), container, context);
+							// Because this will be processed immediately, and because the callback uses a StreamGenerator, 
+							// we can simply pass in the output bucket, even if it is not persistent.
+							// If we ever change it so a StreamGenerator can be saved, we'll have to copy here.
+							// Transient buckets should throw if attempted to store.
+							onSuccess(new FetchResult(clientMetadata, data), container, context);
 							if(persistent)
 								container.deactivate(SingleFileFetcher.this, 1);
 						}
@@ -784,7 +738,7 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 				if(logMINOR) Logger.minor(this, "Is multi-level metadata");
 				// Fetch on a second SingleFileFetcher, like with archives.
 				metadata.setSimpleRedirect();
-				final SingleFileFetcher f = new SingleFileFetcher(this, persistent, false, metadata, new MultiLevelMetadataCallback(persistent), ctx, container, context);
+				final SingleFileFetcher f = new SingleFileFetcher(this, persistent, false, metadata, new MultiLevelMetadataCallback(persistent, ctx), ctx, container, context);
 				// Clear our own metadata so it can be garbage collected, it will be replaced by whatever is fetched.
 				// The new fetcher has our metadata so we don't need to removeMetadata().
 				this.metadata = null;
@@ -848,7 +802,7 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 					addedMetaStrings++;
 				}
 
-				final SingleFileFetcher f = new SingleFileFetcher(parent, rcb, clientMetadata, redirectedKey, metaStrings, this.uri, addedMetaStrings, ctx, deleteFetchContext, actx, ah, archiveMetadata, maxRetries, recursionLevel, false, token, true, returnBucket, isFinal, topDontCompress, topCompatibilityMode, container, context);
+				final SingleFileFetcher f = new SingleFileFetcher(parent, rcb, clientMetadata, redirectedKey, metaStrings, this.uri, addedMetaStrings, ctx, deleteFetchContext, actx, ah, archiveMetadata, maxRetries, recursionLevel, false, token, true, isFinal, topDontCompress, topCompatibilityMode, container, context);
 				this.deleteFetchContext = false;
 				if((redirectedKey instanceof ClientCHK) && !((ClientCHK)redirectedKey).isMetadata())
 					rcb.onBlockSetFinished(this, container, context);
@@ -943,7 +897,7 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 				}
 				
 				SplitFileFetcher sf = new SplitFileFetcher(metadata, rcb, parent, ctx, deleteFetchContext, 
-						decompressors, clientMetadata, actx, recursionLevel, returnBucket, token, topDontCompress, topCompatibilityMode, container, context);
+						decompressors, clientMetadata, actx, recursionLevel, token, topDontCompress, topCompatibilityMode, container, context);
 				this.deleteFetchContext = false;
 				if(persistent) {
 					container.store(sf); // Avoid problems caused by storing a deactivated sf
@@ -1039,18 +993,63 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 		/** For activation we need to know whether we are persistent even though the parent may not have been activated yet */
 		private final boolean persistent;
 		private HashResult[] hashes;
+		private final FetchContext ctx;
 		
 		ArchiveFetcherCallback(boolean wasFetchingFinalData, String element, ArchiveExtractCallback cb) {
 			this.wasFetchingFinalData = wasFetchingFinalData;
 			this.element = element;
 			this.callback = cb;
 			this.persistent = SingleFileFetcher.this.persistent;
+			this.ctx = SingleFileFetcher.this.ctx;
 		}
 		
-		public void onSuccess(FetchResult result, ClientGetState state, ObjectContainer container, ClientContext context) {
+		public void onSuccess(StreamGenerator streamGenerator, ClientMetadata clientMetadata, List<? extends Compressor> decompressors, ClientGetState state, ObjectContainer container, ClientContext context) {
+			OutputStream output = null;
+			PipedInputStream pipeIn = new PipedInputStream();
+			PipedOutputStream pipeOut = new PipedOutputStream();
+			Bucket data = null;
+			if(persistent) {
+				container.activate(decompressors, 5);
+				container.activate(ctx, 2);
+			}
+			long maxLen = Math.max(ctx.maxTempLength, ctx.maxOutputLength);
+			try {
+				data = context.getBucketFactory(persistent).makeBucket(maxLen);
+				output = data.getOutputStream();
+				if(decompressors != null) {
+					if(logMINOR) Logger.minor(this, "decompressing...");
+					pipeOut.connect(pipeIn);
+					DecompressorThreadManager decompressorManager =  new DecompressorThreadManager(pipeIn, decompressors, maxLen);
+					pipeIn = decompressorManager.execute();
+					ClientGetWorkerThread worker = new ClientGetWorkerThread(pipeIn, output, null, null, null, false, null, null, null);
+					worker.start();
+					streamGenerator.writeTo(pipeOut, container, context);
+					decompressorManager.waitFinished();
+					worker.waitFinished();
+				} else streamGenerator.writeTo(output, container, context);
+
+				output.close();
+				pipeOut.close();
+				pipeIn.close();
+			} catch (OutOfMemoryError e) {
+				OOMHandler.handleOOM(e);
+				System.err.println("Failing above attempted fetch...");
+				onFailure(new FetchException(FetchException.INTERNAL_ERROR, e), state, container, context);
+				return;
+			} catch (Throwable t) {
+				Logger.error(this, "Caught "+t, t);
+				onFailure(new FetchException(FetchException.INTERNAL_ERROR, t), state, container, context);
+				return;
+			} finally {
+				Closer.close(pipeOut);
+				Closer.close(pipeIn);
+				Closer.close(output);
+			}
+
 			if(!persistent) {
 				// Run directly - we are running on some thread somewhere, don't worry about it.
-				innerSuccess(result, container, context);
+				parent.onTransition(state, SingleFileFetcher.this, container);
+				innerSuccess(data, container, context);
 			} else {
 				boolean wasActive;
 				// We are running on the database thread.
@@ -1064,7 +1063,7 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 				if(persistent)
 					container.activate(actx, 1);
 				ah.activateForExecution(container);
-				ah.extractPersistentOffThread(result.asBucket(), true, actx, element, callback, container, context);
+				ah.extractPersistentOffThread(data, true, actx, element, callback, container, context);
 				if(!wasActive)
 					container.deactivate(SingleFileFetcher.this, 1);
 				if(state != null)
@@ -1079,13 +1078,13 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 			}
 		}
 
-		private void innerSuccess(FetchResult result, ObjectContainer container, ClientContext context) {
+		private void innerSuccess(Bucket data, ObjectContainer container, ClientContext context) {
 			try {
 				if(hashes != null) {
 					InputStream is = null;
 					try {
 						if(persistent()) container.activate(hashes, Integer.MAX_VALUE);
-						is = result.asBucket().getInputStream();
+						is = data.getInputStream();
 						MultiHashInputStream hasher = new MultiHashInputStream(is, HashResult.makeBitmask(hashes));
 						byte[] buf = new byte[32768];
 						while(hasher.read(buf) > 0);
@@ -1103,7 +1102,7 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 						Closer.close(is);
 					}
 				}
-				ah.extractToCache(result.asBucket(), actx, element, callback, context.archiveManager, container, context);
+				ah.extractToCache(data, actx, element, callback, context.archiveManager, container, context);
 			} catch (ArchiveFailureException e) {
 				SingleFileFetcher.this.onFailure(new FetchException(e), false, container, context);
 				return;
@@ -1111,8 +1110,8 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 				SingleFileFetcher.this.onFailure(new FetchException(e), false, container, context);
 				return;
 			} finally {
-				result.asBucket().free();
-				if(persistent) result.asBucket().removeFrom(container);
+				data.free();
+				if(persistent) data.removeFrom(container);
 			}
 			if(callback != null) return;
 			innerWrapHandleMetadata(true, container, context);
@@ -1215,6 +1214,7 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 	class MultiLevelMetadataCallback implements GetCompletionCallback {
 
 		private final boolean persistent;
+		private final FetchContext ctx;
 
 		/**
 		 * zero arg c'tor for db4o on jamvm
@@ -1222,13 +1222,58 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 		@SuppressWarnings("unused")
 		private MultiLevelMetadataCallback() {
 			persistent = false;
+			ctx = null;
 		}
 
-		MultiLevelMetadataCallback(boolean persistent) {
+		MultiLevelMetadataCallback(boolean persistent, FetchContext ctx) {
 			this.persistent = persistent;
+			this.ctx = ctx;
 		}
-		
-		public void onSuccess(FetchResult result, ClientGetState state, ObjectContainer container, ClientContext context) {
+
+		public void onSuccess(StreamGenerator streamGenerator, ClientMetadata clientMetadata, List<? extends Compressor> decompressors, ClientGetState state,
+				ObjectContainer container, ClientContext context) {
+			OutputStream output = null;
+			PipedInputStream pipeIn = new PipedInputStream();
+			PipedOutputStream pipeOut = new PipedOutputStream();
+			Bucket finalData = null;
+			if(persistent) {
+				container.activate(decompressors, 5);
+				container.activate(ctx, 2);
+			}
+			long maxLen = Math.max(ctx.maxTempLength, ctx.maxOutputLength);
+			try {
+				finalData = context.getBucketFactory(persistent).makeBucket(maxLen);
+				output = finalData.getOutputStream();
+				if(decompressors != null) {
+					if(logMINOR) Logger.minor(this, "decompressing...");
+					pipeIn.connect(pipeOut);
+					DecompressorThreadManager decompressorManager =  new DecompressorThreadManager(pipeIn, decompressors, maxLen);
+					pipeIn = decompressorManager.execute();
+					ClientGetWorkerThread worker = new ClientGetWorkerThread(pipeIn, output, null, null, null, false, null, null, null);
+					worker.start();
+					streamGenerator.writeTo(pipeOut, container, context);
+					decompressorManager.waitFinished();
+					worker.waitFinished();
+				} else streamGenerator.writeTo(output, container, context);
+
+				pipeOut.close();
+				pipeIn.close();
+				output.close();
+			} catch (OutOfMemoryError e) {
+				OOMHandler.handleOOM(e);
+				System.err.println("Failing above attempted fetch...");
+				onFailure(new FetchException(FetchException.INTERNAL_ERROR, e), state, container, context);
+				return;
+			} catch (Throwable t) {
+				Logger.error(this, "Caught "+t, t);
+				onFailure(new FetchException(FetchException.INTERNAL_ERROR, t), state, container, context);
+				return;
+			} finally {
+				Closer.close(pipeOut);
+				Closer.close(pipeIn);
+				Closer.close(output);
+			}
+
 			boolean wasActive = true;
 			if(persistent) {
 				wasActive = container.ext().isActive(SingleFileFetcher.this);
@@ -1237,7 +1282,8 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 			}
 			try {
 				parent.onTransition(state, SingleFileFetcher.this, container);
-				Metadata meta = Metadata.construct(result.asBucket());
+				//FIXME: Pass an InputStream here, and save ourselves a Bucket
+				Metadata meta = Metadata.construct(finalData);
 				removeMetadata(container);
 				synchronized(SingleFileFetcher.this) {
 					metadata = meta;
@@ -1249,13 +1295,15 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 				innerWrapHandleMetadata(true, container, context);
 			} catch (MetadataParseException e) {
 				SingleFileFetcher.this.onFailure(new FetchException(FetchException.INVALID_METADATA, e), false, container, context);
+				return;
 			} catch (IOException e) {
 				// Bucket error?
 				SingleFileFetcher.this.onFailure(new FetchException(FetchException.BUCKET_ERROR, e), false, container, context);
+				return;
 			} finally {
-				result.asBucket().free();
+				finalData.free();
 				if(persistent)
-					result.asBucket().removeFrom(container);
+					finalData.removeFrom(container);
 			}
 			if(!wasActive)
 				container.deactivate(SingleFileFetcher.this, 1);
@@ -1270,7 +1318,9 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 			if(persistent) {
 				wasActive = container.ext().isActive(SingleFileFetcher.this);
 				container.activate(SingleFileFetcher.this, 1);
+				container.activate(parent, 1);
 			}
+			parent.onTransition(state, SingleFileFetcher.this, container);
 			// Pass it on; fetcher is assumed to have retried as appropriate already, so this is fatal.
 			SingleFileFetcher.this.onFailure(e, true, container, context);
 			if(!wasActive)
@@ -1347,20 +1397,20 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 	public static ClientGetState create(ClientRequester requester, GetCompletionCallback cb, 
 			FreenetURI uri, FetchContext ctx, ArchiveContext actx, 
 			int maxRetries, int recursionLevel, boolean dontTellClientGet, long l, boolean isEssential, 
-			Bucket returnBucket, boolean isFinal, ObjectContainer container, ClientContext context) throws MalformedURLException, FetchException {
+			boolean isFinal, ObjectContainer container, ClientContext context) throws MalformedURLException, FetchException {
 		BaseClientKey key = BaseClientKey.getBaseKey(uri);
 		if((!uri.hasMetaStrings()) &&
 				ctx.allowSplitfiles == false && ctx.followRedirects == false && 
-				returnBucket == null && key instanceof ClientKey)
+				key instanceof ClientKey)
 			return new SimpleSingleFileFetcher((ClientKey)key, maxRetries, ctx, requester, cb, isEssential, false, l, container, context, false);
 		if(key instanceof ClientKey)
-			return new SingleFileFetcher(requester, cb, null, (ClientKey)key, new ArrayList<String>(uri.listMetaStrings()), uri, 0, ctx, false, actx, null, null, maxRetries, recursionLevel, dontTellClientGet, l, isEssential, returnBucket, isFinal, false, (short)0, container, context);
+			return new SingleFileFetcher(requester, cb, null, (ClientKey)key, new ArrayList<String>(uri.listMetaStrings()), uri, 0, ctx, false, actx, null, null, maxRetries, recursionLevel, dontTellClientGet, l, isEssential, isFinal, false, (short)0, container, context);
 		else {
-			return uskCreate(requester, cb, (USK)key, new ArrayList<String>(uri.listMetaStrings()), ctx, actx, maxRetries, recursionLevel, dontTellClientGet, l, isEssential, returnBucket, isFinal, container, context);
+			return uskCreate(requester, cb, (USK)key, new ArrayList<String>(uri.listMetaStrings()), ctx, actx, maxRetries, recursionLevel, dontTellClientGet, l, isEssential, isFinal, container, context);
 		}
 	}
 
-	private static ClientGetState uskCreate(ClientRequester requester, GetCompletionCallback cb, USK usk, ArrayList<String> metaStrings, FetchContext ctx, ArchiveContext actx, int maxRetries, int recursionLevel, boolean dontTellClientGet, long l, boolean isEssential, Bucket returnBucket, boolean isFinal, ObjectContainer container, ClientContext context) throws FetchException {
+	private static ClientGetState uskCreate(ClientRequester requester, GetCompletionCallback cb, USK usk, ArrayList<String> metaStrings, FetchContext ctx, ArchiveContext actx, int maxRetries, int recursionLevel, boolean dontTellClientGet, long l, boolean isEssential, boolean isFinal, ObjectContainer container, ClientContext context) throws FetchException {
 		if(usk.suggestedEdition >= 0) {
 			// Return the latest known version but at least suggestedEdition.
 			long edition = context.uskManager.lookupKnownGood(usk);
@@ -1377,7 +1427,7 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 					// Check the datastore first.
 					USKFetcherTag tag = 
 						context.uskManager.getFetcher(usk.copy(usk.suggestedEdition), ctx, false, requester.persistent(),
-								new MyUSKFetcherCallback(requester, cb, usk, metaStrings, ctx, actx, maxRetries, recursionLevel, dontTellClientGet, l, returnBucket, requester.persistent(), true), false, container, context, true);
+								new MyUSKFetcherCallback(requester, cb, usk, metaStrings, ctx, actx, maxRetries, recursionLevel, dontTellClientGet, l, requester.persistent(), true), false, container, context, true);
 					if(isEssential)
 						requester.addMustSucceedBlocks(1, container);
 					return tag;
@@ -1390,7 +1440,7 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 					SingleFileFetcher sf = 
 						new SingleFileFetcher(requester, myCB, null, usk.getSSK(), metaStrings, 
 								usk.getURI().addMetaStrings(metaStrings), 0, ctx, false, actx, null, null, maxRetries, recursionLevel, 
-								dontTellClientGet, l, isEssential, returnBucket, isFinal, false, (short)0, container, context);
+								dontTellClientGet, l, isEssential, isFinal, false, (short)0, container, context);
 					return sf;
 				}
 			} else {
@@ -1401,7 +1451,7 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 			// Do a thorough, blocking search
 			USKFetcherTag tag = 
 				context.uskManager.getFetcher(usk.copy(-usk.suggestedEdition), ctx, false, requester.persistent(),
-						new MyUSKFetcherCallback(requester, cb, usk, metaStrings, ctx, actx, maxRetries, recursionLevel, dontTellClientGet, l, returnBucket, requester.persistent(), false), false, container, context, false);
+						new MyUSKFetcherCallback(requester, cb, usk, metaStrings, ctx, actx, maxRetries, recursionLevel, dontTellClientGet, l, requester.persistent(), false), false, container, context, false);
 			if(isEssential)
 				requester.addMustSucceedBlocks(1, container);
 			return tag;
@@ -1420,7 +1470,6 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 		final int recursionLevel;
 		final boolean dontTellClientGet;
 		final long token;
-		final Bucket returnBucket;
 		final boolean persistent;
 		final boolean datastoreOnly;
 		final int hashCode;
@@ -1431,7 +1480,7 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 			if(persistent) container.store(this);
 		}
 		
-		public MyUSKFetcherCallback(ClientRequester requester, GetCompletionCallback cb, USK usk, ArrayList<String> metaStrings, FetchContext ctx, ArchiveContext actx, int maxRetries, int recursionLevel, boolean dontTellClientGet, long l, Bucket returnBucket, boolean persistent, boolean datastoreOnly) {
+		public MyUSKFetcherCallback(ClientRequester requester, GetCompletionCallback cb, USK usk, ArrayList<String> metaStrings, FetchContext ctx, ArchiveContext actx, int maxRetries, int recursionLevel, boolean dontTellClientGet, long l, boolean persistent, boolean datastoreOnly) {
 			this.parent = requester;
 			this.cb = cb;
 			this.usk = usk;
@@ -1442,7 +1491,6 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 			this.recursionLevel = recursionLevel;
 			this.dontTellClientGet = dontTellClientGet;
 			this.token = l;
-			this.returnBucket = returnBucket;
 			this.persistent = persistent;
 			this.datastoreOnly = datastoreOnly;
 			this.hashCode = super.hashCode();
@@ -1462,7 +1510,7 @@ public class SingleFileFetcher extends SimpleSingleFileFetcher {
 			try {
 				if(l == usk.suggestedEdition) {
 					SingleFileFetcher sf = new SingleFileFetcher(parent, cb, null, key, metaStrings, key.getURI().addMetaStrings(metaStrings),
-							0, ctx, false, actx, null, null, maxRetries, recursionLevel+1, dontTellClientGet, token, false, returnBucket, true, false, (short)0, container, context);
+							0, ctx, false, actx, null, null, maxRetries, recursionLevel+1, dontTellClientGet, token, false, true, false, (short)0, container, context);
 					if(tag != null) {
 						if(persistent) container.activate(cb, 1);
 						cb.onTransition(tag, sf, container);

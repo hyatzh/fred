@@ -155,7 +155,6 @@ public class ClientPutter extends BaseClientPutter implements PutCompletionCallb
 			boolean cancel = false;
 			synchronized(this) {
 				if(restart) {
-					clearCountersOnRestart();
 					if(currentState != null && !finished) {
 						if(logMINOR) Logger.minor(this, "Can't restart, not finished and currentState != null : "+currentState);
 						return false;
@@ -462,11 +461,6 @@ public class ClientPutter extends BaseClientPutter implements PutCompletionCallb
 	 * the requestor must fetch. */
 	public void addRedundantBlocks(int blocks, ObjectContainer container) {
 		super.addMustSucceedBlocks(blocks, container);
-	}
-	
-	protected void clearCountersOnRestart() {
-		minSuccessFetchBlocks = 0;
-		super.clearCountersOnRestart();
 	}
 
 	@Override

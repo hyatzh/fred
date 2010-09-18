@@ -653,6 +653,8 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 		uskManager.onFinished(this);
 		SendableGet storeChecker;
 		synchronized(this) {
+			if(cancelled) Logger.error(this, "Already cancelled "+this);
+			if(completed) Logger.error(this, "Already completed "+this);
 			cancelled = true;
 			attempts = runningAttempts.values().toArray(new USKAttempt[runningAttempts.size()]);
 			polling = pollingAttempts.values().toArray(new USKAttempt[pollingAttempts.size()]);
@@ -1032,16 +1034,6 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 		}
 
 		@Override
-		public void resetCooldownTimes(ObjectContainer container, ClientContext context) {
-			// Ignore
-		}
-
-		@Override
-		public boolean hasValidKeys(KeysFetchingLocally fetching, ObjectContainer container, ClientContext context) {
-			return true;
-		}
-
-		@Override
 		public void preRegister(ObjectContainer container, ClientContext context, boolean toNetwork) {
 			unregister(container, context, getPriorityClass(container));
 			USKAttempt[] attempts;
@@ -1146,7 +1138,7 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 		return completed || cancelled;
 	}
 
-	public KeyListener makeKeyListener(ObjectContainer container, ClientContext context) throws KeyListenerConstructionException {
+	public KeyListener makeKeyListener(ObjectContainer container, ClientContext context, boolean onStartup) throws KeyListenerConstructionException {
 		return this;
 	}
 

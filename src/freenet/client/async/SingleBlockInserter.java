@@ -306,7 +306,7 @@ public class SingleBlockInserter extends SendableInsert implements ClientPutStat
 			container.store(this);
 			container.deactivate(ctx, 1);
 		}
-		getScheduler(context).registerInsert(this, persistent, false, container);
+		clearCooldown(container, context, true);
 	}
 
 	private void fail(InsertException e, ObjectContainer container, ClientContext context) {

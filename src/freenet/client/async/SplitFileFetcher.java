@@ -5,7 +5,9 @@ package freenet.client.async;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.OutputStream;
+import java.io.InputStream;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -18,6 +20,8 @@ import freenet.client.ArchiveContext;
 import freenet.client.ClientMetadata;
 import freenet.client.FetchContext;
 import freenet.client.FetchException;
+import freenet.client.HighLevelSimpleClientImpl;
+import freenet.client.InsertContext;
 import freenet.client.FetchResult;
 import freenet.client.InsertContext.CompatibilityMode;
 import freenet.client.Metadata;
@@ -35,8 +39,8 @@ import freenet.support.Logger;
 import freenet.support.Logger.LogLevel;
 import freenet.support.OOMHandler;
 import freenet.support.api.Bucket;
-import freenet.support.compress.CompressionOutputSizeException;
 import freenet.support.compress.Compressor;
+import freenet.support.io.Closer;
 import freenet.support.io.FileUtil;
 
 /**
@@ -83,8 +87,6 @@ public class SplitFileFetcher implements ClientGetState, HasKeyListener {
 	private boolean allSegmentsFinished;
 	/** Override length. If this is positive, truncate the splitfile to this length. */
 	private final long overrideLength;
-	/** Preferred bucket to return data in */
-	private final Bucket returnBucket;
 	private boolean finished;
 	private long token;
 	final boolean persistent;
@@ -152,7 +154,6 @@ public class SplitFileFetcher implements ClientGetState, HasKeyListener {
 		splitfileType = 0;
 		segments = null;
 		segmentCount = 0;
-		returnBucket = null;
 		recursionLevel = 0;
 		persistent = false;
 		perSegmentK = 0;
@@ -180,7 +181,7 @@ public class SplitFileFetcher implements ClientGetState, HasKeyListener {
 
 	public SplitFileFetcher(Metadata metadata, GetCompletionCallback rcb, ClientRequester parent2,
 			FetchContext newCtx, boolean deleteFetchContext, List<? extends Compressor> decompressors2, ClientMetadata clientMetadata,
-			ArchiveContext actx, int recursionLevel, Bucket returnBucket, long token2, boolean topDontCompress, short topCompatibilityMode, ObjectContainer container, ClientContext context) throws FetchException, MetadataParseException {
+			ArchiveContext actx, int recursionLevel, long token2, boolean topDontCompress, short topCompatibilityMode, ObjectContainer container, ClientContext context) throws FetchException, MetadataParseException {
 		this.persistent = parent2.persistent();
 		this.deleteFetchContext = deleteFetchContext;
 		if(logMINOR)
@@ -189,7 +190,6 @@ public class SplitFileFetcher implements ClientGetState, HasKeyListener {
 		if(hash == 0) hash = 1;
 		this.hashCode = hash;
 		this.finished = false;
-		this.returnBucket = returnBucket;
 		this.fetchContext = newCtx;
 		if(newCtx == null)
 			throw new NullPointerException();
@@ -320,7 +320,7 @@ public class SplitFileFetcher implements ClientGetState, HasKeyListener {
 		if(logMINOR)
 			Logger.minor(this, "Creating block filter for "+this+": keys="+(splitfileDataBlocks+splitfileCheckBlocks)+" main bloom size "+mainBloomFilterSizeBytes+" bytes, K="+mainBloomK+", filename="+mainBloomFile+" alt bloom filter: filename="+altBloomFile+" segments: "+segments.length+" each is "+perSegmentBloomFilterSizeBytes+" bytes k="+perSegmentK);
 		try {
-			tempListener = new SplitFileFetcherKeyListener(this, keyCount, mainBloomFile, altBloomFile, mainBloomFilterSizeBytes, mainBloomK, localSalt, segments.length, perSegmentBloomFilterSizeBytes, perSegmentK, persistent, true, null, null, container);
+			tempListener = new SplitFileFetcherKeyListener(this, keyCount, mainBloomFile, altBloomFile, mainBloomFilterSizeBytes, mainBloomK, localSalt, segments.length, perSegmentBloomFilterSizeBytes, perSegmentK, persistent, true, null, null, container, false);
 		} catch (IOException e) {
 			throw new FetchException(FetchException.BUCKET_ERROR, "Unable to write Bloom filters for splitfile");
 		}
@@ -450,12 +450,12 @@ public class SplitFileFetcher implements ClientGetState, HasKeyListener {
 		throw new IllegalStateException("Unable to allocate cross data block!");
 	}
 
-	/** Return the final status of the fetch. Throws an exception, or returns a
-	 * Bucket containing the fetched data.
+	/** Return the final status of the fetch. Throws an exception, or returns an
+	 * InputStream from which the fetched data may be read.
 	 * @throws FetchException If the fetch failed for some reason.
 	 */
-	private Bucket finalStatus(ObjectContainer container, ClientContext context) throws FetchException {
-		long finalLength = 0;
+	private SplitFileStreamGenerator finalStatus(final ObjectContainer container, final ClientContext context) throws FetchException {
+		long length = 0;
 		for(int i=0;i<segments.length;i++) {
 			SplitFileFetcherSegment s = segments[i];
 			if(persistent)
@@ -466,56 +466,19 @@ public class SplitFileFetcher implements ClientGetState, HasKeyListener {
 			s.throwError(container);
 			// If still here, it succeeded
 			long sz = s.decodedLength(container);
-			finalLength += sz;
+			length += sz;
 			if(logMINOR)
-				Logger.minor(this, "Segment "+i+" decoded length "+sz+" total length now "+finalLength+" for "+s.dataBuckets.length+" blocks which should be "+(s.dataBuckets.length * NodeCHK.BLOCK_SIZE)+" for "+this);
+				Logger.minor(this, "Segment "+i+" decoded length "+sz+" total length now "+length+" for "+s.dataBuckets.length+" blocks which should be "+(s.dataBuckets.length * NodeCHK.BLOCK_SIZE));
 			// Healing is done by Segment
 		}
-		if(finalLength > overrideLength) {
-			if(finalLength - overrideLength > CHKBlock.DATA_LENGTH)
-				throw new FetchException(FetchException.INVALID_METADATA, "Splitfile is "+finalLength+" but length is "+finalLength);
-			finalLength = overrideLength;
+		if(length > overrideLength) {
+			if(length - overrideLength > CHKBlock.DATA_LENGTH)
+				throw new FetchException(FetchException.INVALID_METADATA, "Splitfile is "+length+" but length is "+length);
+			length = overrideLength;
 		}
-
-		long bytesWritten = 0;
-		OutputStream os = null;
-		Bucket output;
-		if(persistent) {
-			container.activate(decompressors, 5);
-			if(returnBucket != null)
-				container.activate(returnBucket, 5);
-		}
-		try {
-			if((returnBucket != null) && decompressors.isEmpty()) {
-				output = returnBucket;
-			} else
-				output = context.getBucketFactory(parent.persistent()).makeBucket(finalLength);
-			os = output.getOutputStream();
-			for(int i=0;i<segments.length;i++) {
-				SplitFileFetcherSegment s = segments[i];
-				long max = (finalLength < 0 ? 0 : (finalLength - bytesWritten));
-				bytesWritten += s.writeDecodedDataTo(os, max, container);
-				if(crossCheckBlocks == 0)
-					s.fetcherHalfFinished(container);
-				// Else we need to wait for the cross-segment fetchers and innerRemoveFrom()
-			}
-		} catch (IOException e) {
-			throw new FetchException(FetchException.BUCKET_ERROR, e);
-		} finally {
-			if(os != null) {
-				try {
-					os.close();
-				} catch (IOException e) {
-					// If it fails to close it may return corrupt data.
-					throw new FetchException(FetchException.BUCKET_ERROR, e);
-				}
-			}
-		}
-		if(finalLength != output.size()) {
-			Logger.error(this, "Final length is supposed to be "+finalLength+" but only written "+output.size());
-		}
-		return output;
-	}
+		SplitFileStreamGenerator streamGenerator = new SplitFileStreamGenerator(segments, length, crossCheckBlocks);
+		return streamGenerator;
+}
 
 	public void segmentFinished(SplitFileFetcherSegment segment, ObjectContainer container, ClientContext context) {
 		if(persistent)
@@ -560,6 +523,7 @@ public class SplitFileFetcher implements ClientGetState, HasKeyListener {
 		}
 		context.getChkFetchScheduler().removePendingKeys(this, true);
 		boolean cbWasActive = true;
+		SplitFileStreamGenerator data = null;
 		try {
 			synchronized(this) {
 				if(otherFailure != null) {
@@ -574,73 +538,15 @@ public class SplitFileFetcher implements ClientGetState, HasKeyListener {
 			context.jobRunner.setCommitThisTransaction();
 			if(persistent)
 				container.store(this);
-			Bucket data = finalStatus(container, context);
-			// Decompress
-			if(persistent) {
-				container.activate(decompressors, 5);
-				container.activate(returnBucket, 5);
-				cbWasActive = container.ext().isActive(cb);
-				if(!cbWasActive)
-					container.activate(cb, 1);
-				container.activate(fetchContext, 1);
-				if(fetchContext == null) {
-					Logger.error(this, "Fetch context is null");
-					if(!container.ext().isActive(fetchContext)) {
-						Logger.error(this, "Fetch context is null and splitfile is not activated", new Exception("error"));
-						container.activate(this, 1);
-						container.activate(decompressors, 5);
-						container.activate(returnBucket, 5);
-						container.activate(fetchContext, 1);
-					} else {
-						Logger.error(this, "Fetch context is null and splitfile IS activated", new Exception("error"));
-					}
-				}
-				container.activate(fetchContext, 1);
-			}
-			int count = 0;
-			while(!decompressors.isEmpty()) {
-				Compressor c = decompressors.remove(decompressors.size()-1);
-				if(logMINOR)
-					Logger.minor(this, "Decompressing with "+c);
-				long maxLen = Math.max(fetchContext.maxTempLength, fetchContext.maxOutputLength);
-				Bucket orig = data;
-				try {
-					Bucket out = returnBucket;
-					if(!decompressors.isEmpty()) out = null;
-					data = c.decompress(data, context.getBucketFactory(parent.persistent()), maxLen, maxLen * 4, out);
-				} catch (IOException e) {
-					if(e.getMessage().equals("Not in GZIP format") && count == 1) {
-						Logger.error(this, "Attempting to decompress twice, failed, returning first round data: "+this);
-						break;
-					}
-					cb.onFailure(new FetchException(FetchException.BUCKET_ERROR, e), this, container, context);
-					return;
-				} catch (CompressionOutputSizeException e) {
-					if(logMINOR)
-						Logger.minor(this, "Too big: maxSize = "+fetchContext.maxOutputLength+" maxTempSize = "+fetchContext.maxTempLength);
-					cb.onFailure(new FetchException(FetchException.TOO_BIG, e.estimatedSize, false /* FIXME */, clientMetadata.getMIMEType()), this, container, context);
-					return;
-				} finally {
-					if(orig != data) {
-						orig.free();
-						if(persistent) orig.removeFrom(container);
-					}
-				}
-				count++;
-			}
-			cb.onSuccess(new FetchResult(clientMetadata, data), this, container, context);
-		} catch (FetchException e) {
-			cb.onFailure(e, this, container, context);
-		} catch (OutOfMemoryError e) {
-			OOMHandler.handleOOM(e);
-			System.err.println("Failing above attempted fetch...");
-			cb.onFailure(new FetchException(FetchException.INTERNAL_ERROR, e), this, container, context);
-		} catch (Throwable t) {
-			Logger.error(this, "Caught "+t, t);
-			cb.onFailure(new FetchException(FetchException.INTERNAL_ERROR, t), this, container, context);
+			data = finalStatus(container, context);
+			cb.onSuccess(data, clientMetadata, decompressors, this, container, context);
 		}
-		if(!cbWasActive)
-			container.deactivate(cb, 1);
+		catch (FetchException e) {
+			cb.onFailure(e, this, container, context);
+		} finally {
+			if(!cbWasActive) container.deactivate(cb, 1);
+		}
+		if(crossCheckBlocks != 0 && !persistent) finishSegments(container, context);
 	}
 
 	public void schedule(ObjectContainer container, ClientContext context) throws KeyListenerConstructionException {
@@ -698,7 +604,7 @@ public class SplitFileFetcher implements ClientGetState, HasKeyListener {
 	 * constructed one at some point, maybe before a restart.
 	 * @throws FetchException
 	 */
-	public KeyListener makeKeyListener(ObjectContainer container, ClientContext context) throws KeyListenerConstructionException {
+	public KeyListener makeKeyListener(ObjectContainer container, ClientContext context, boolean onStartup) throws KeyListenerConstructionException {
 		synchronized(this) {
 			if(finished) return null;
 			if(tempListener != null) {
@@ -738,7 +644,7 @@ public class SplitFileFetcher implements ClientGetState, HasKeyListener {
 				if(logMINOR)
 					Logger.minor(this, "Attempting to read Bloom filter for "+this+" main file="+main+" alt file="+alt);
 				tempListener =
-					new SplitFileFetcherKeyListener(this, keyCount, main, alt, mainBloomFilterSizeBytes, mainBloomK, localSalt, segments.length, perSegmentBloomFilterSizeBytes, perSegmentK, persistent, false, cachedMainBloomFilter, cachedSegmentBloomFilters, container);
+					new SplitFileFetcherKeyListener(this, keyCount, main, alt, mainBloomFilterSizeBytes, mainBloomK, localSalt, segments.length, perSegmentBloomFilterSizeBytes, perSegmentK, persistent, false, cachedMainBloomFilter, cachedSegmentBloomFilters, container, onStartup);
 				if(main != null) {
 					try {
 						FileUtil.secureDelete(main, context.fastWeakRandom);
@@ -773,7 +679,7 @@ public class SplitFileFetcher implements ClientGetState, HasKeyListener {
 
 				try {
 					tempListener =
-						new SplitFileFetcherKeyListener(this, keyCount, mainBloomFile, altBloomFile, mainBloomFilterSizeBytes, mainBloomK, localSalt, segments.length, perSegmentBloomFilterSizeBytes, perSegmentK, persistent, true, cachedMainBloomFilter, cachedSegmentBloomFilters, container);
+						new SplitFileFetcherKeyListener(this, keyCount, mainBloomFile, altBloomFile, mainBloomFilterSizeBytes, mainBloomK, localSalt, segments.length, perSegmentBloomFilterSizeBytes, perSegmentK, persistent, true, cachedMainBloomFilter, cachedSegmentBloomFilters, container, onStartup);
 				} catch (IOException e1) {
 					throw new KeyListenerConstructionException(new FetchException(FetchException.BUCKET_ERROR, "Unable to reconstruct Bloom filters: "+e1, e1));
 				}
@@ -869,12 +775,7 @@ public class SplitFileFetcher implements ClientGetState, HasKeyListener {
 		clientMetadata.removeFrom(container);
 		container.activate(decompressors, 1);
 		container.delete(decompressors);
-		for(int i=0;i<segments.length;i++) {
-			SplitFileFetcherSegment segment = segments[i];
-			segments[i] = null;
-			container.activate(segment, 1);
-			segment.fetcherFinished(container, context);
-		}
+		finishSegments(container, context);
 		if(crossCheckBlocks != 0) {
 			for(int i=0;i<crossSegments.length;i++) {
 				SplitFileFetcherCrossSegment segment = crossSegments[i];
@@ -898,6 +799,16 @@ public class SplitFileFetcher implements ClientGetState, HasKeyListener {
 			cachedSegmentBloomFilters[i].removeFrom(container);
 		}
 		container.delete(this);
+	}
+
+	private void finishSegments(ObjectContainer container, ClientContext context) {
+		for(int i=0;i<segments.length;i++) {
+			SplitFileFetcherSegment segment = segments[i];
+			segments[i] = null;
+			if(persistent) container.activate(segment, 1);
+			if(segment != null)
+				segment.fetcherFinished(container, context);
+		}
 	}
 
 	public boolean objectCanUpdate(ObjectContainer container) {
@@ -947,7 +858,10 @@ public class SplitFileFetcher implements ClientGetState, HasKeyListener {
 		}
 		if(!toRemove) return false;
 		if(allGone) {
-			innerRemoveFrom(container, context);
+			if(persistent)
+				innerRemoveFrom(container, context);
+			else
+				finishSegments(container, context);
 			return true;
 		} else if(persistent)
 			container.store(this);

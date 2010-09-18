@@ -33,11 +33,11 @@ public class NodeStarter implements WrapperListener {
 
 	private Node node;
 	private static LoggingConfigHandler logConfigHandler;
-	/** Freenet will not function at all without at least this build of freenet-ext.jar. 
+	/** Freenet will not function at all without at least this build of freenet-ext.jar.
 	 * This will be included in the jar manifest file so we can check it when we download new builds. */
 	public final static int REQUIRED_EXT_BUILD_NUMBER = 24;
-	/** Freenet will function best with this build of freenet-ext.jar. 
-	 * It may be required in the near future. The node will try to download it. 
+	/** Freenet will function best with this build of freenet-ext.jar.
+	 * It may be required in the near future. The node will try to download it.
 	 * The node will not update to a later ext version than this, because that might be incompatible. */
 	public final static int RECOMMENDED_EXT_BUILD_NUMBER = 26;
 	/*
@@ -65,7 +65,7 @@ public class NodeStarter implements WrapperListener {
 	 * WrapperListener Methods
 	 *-------------------------------------------------------------*/
 	/**
-	 * The start method is called when the WrapperManager is signaled by the 
+	 * The start method is called when the WrapperManager is signaled by the
 	 *	native wrapper code that it can start its application.  This
 	 *	method call is expected to return, so a new thread should be launched
 	 *	if necessary.
@@ -239,8 +239,8 @@ public class NodeStarter implements WrapperListener {
 	/**
 	 * Called whenever the native wrapper code traps a system control signal
 	 *  against the Java process.  It is up to the callback to take any actions
-	 *  necessary.  Possible values are: WrapperManager.WRAPPER_CTRL_C_EVENT, 
-	 *    WRAPPER_CTRL_CLOSE_EVENT, WRAPPER_CTRL_LOGOFF_EVENT, or 
+	 *  necessary.  Possible values are: WrapperManager.WRAPPER_CTRL_C_EVENT,
+	 *    WRAPPER_CTRL_CLOSE_EVENT, WRAPPER_CTRL_LOGOFF_EVENT, or
 	 *    WRAPPER_CTRL_SHUTDOWN_EVENT
 	 *
 	 * @param event The system control signal.
@@ -269,7 +269,7 @@ public class NodeStarter implements WrapperListener {
 	}
 
 	static SemiOrderedShutdownHook shutdownHook;
-	
+
 	/**
 	 * VM-specific init.
 	 * Not Node-specific; many nodes may be created later.
@@ -382,6 +382,9 @@ public class NodeStarter implements WrapperListener {
 		configFS.put("fcp.persistentDownloadsEnabled", false);
 		configFS.putSingle("node.throttleFile", new File(portDir, "throttle.dat").toString());
 		configFS.putSingle("node.nodeDir", portDir.toString());
+		configFS.putSingle("node.userDir", portDir.toString());
+		configFS.putSingle("node.runDir", portDir.toString());
+		configFS.putSingle("node.cfgDir", portDir.toString());
 		configFS.put("node.maxHTL", maxHTL);
 		configFS.put("node.testingDropPacketsEvery", dropProb);
 		configFS.put("node.alwaysAllowLocalAddresses", true);
@@ -414,7 +417,7 @@ public class NodeStarter implements WrapperListener {
 			configFS.put("node.maxPingTime", 100000);
 			configFS.put("node.subMaxPingTime", 50000);
 		}
-		
+
 		PersistentConfig config = new PersistentConfig(configFS);
 
 		Node node = new Node(config, random, random, null, null, executor);

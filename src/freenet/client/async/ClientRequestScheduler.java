@@ -164,7 +164,7 @@ public class ClientRequestScheduler implements RequestScheduler {
 			container.activate(l, 1);
 			try {
 				if(l.isCancelled(container)) continue;
-				KeyListener listener = l.makeKeyListener(container, context);
+				KeyListener listener = l.makeKeyListener(container, context, true);
 				if(listener != null) {
 					if(listener.isSSK())
 						context.getSskFetchScheduler().addPersistentPendingKeys(listener);
@@ -279,7 +279,7 @@ public class ClientRequestScheduler implements RequestScheduler {
 		} else {
 			final KeyListener listener;
 			if(hasListener != null) {
-				listener = hasListener.makeKeyListener(container, clientContext);
+				listener = hasListener.makeKeyListener(container, clientContext, false);
 				if(listener != null)
 					schedTransient.addPendingKeys(listener);
 				else
@@ -309,7 +309,7 @@ public class ClientRequestScheduler implements RequestScheduler {
 				return;
 			}
 			container.store(hasListener);
-			listener = hasListener.makeKeyListener(container, clientContext);
+			listener = hasListener.makeKeyListener(container, clientContext, false);
 			schedCore.addPendingKeys(listener);
 		} else
 			listener = null;
@@ -430,18 +430,11 @@ public class ClientRequestScheduler implements RequestScheduler {
 				}
 			}
 		}
-		container.activate(request, 1);
-		// Because the request is no longer running, we need to clear the cooldown cache.
-		// In the worst case, it will have Long.MAX_VALUE all the way up, in which case, if we go into
-		// cooldown, we will never come out. However in many cases the request will not
-		// be the limiting factor, so the propagation will stop before that.
-		if(container.ext().isStored(request)) // may have been removed already, in which case it will have been removed from the cache too
-			clientContext.cooldownTracker.clearCachedWakeup(request, true, container, true);
-		// It is possible that the parent was added to the cache because e.g. a request was running for the same key.
-		// We should wake up the parent as well even if this item is not in cooldown.
-		RandomGrabArray rga = request.getParentGrabArray();
-		if(rga != null && container.ext().isStored(rga))
-			clientContext.cooldownTracker.clearCachedWakeup(rga, true, container, true);
+		// We *DO* need to call clearCooldown here because it only becomes runnable for persistent requests after it has been removed from starterQueue.
+		boolean active = container.ext().isActive(request);
+		if(!active) container.activate(request, 1);
+		request.clearCooldown(container, clientContext, false);
+		if(!active) container.deactivate(request, 1);
 	}
 	
 	public boolean isRunningOrQueuedPersistentRequest(SendableRequest request) {
@@ -1058,11 +1051,14 @@ public class ClientRequestScheduler implements RequestScheduler {
 	}
 
 	public void removeFetchingKey(Key key) {
+		// Don't need to call clearCooldown(), because selector will do it for each request blocked on the key.
 		selector.removeFetchingKey(key);
 	}
 
 	public void removeTransientInsertFetching(SendableInsert insert, Object token) {
 		selector.removeTransientInsertFetching(insert, token);
+		// Must remove here, because blocks selection and therefore creates cooldown cache entries.
+		insert.clearCooldown(null, clientContext, false);
 	}
 	
 	public void callFailure(final SendableGet get, final LowLevelGetException e, int prio, boolean persistent) {

@@ -543,7 +543,8 @@ public class SplitFileFetcherSegment implements FECCallback, HasCooldownTrackerI
 		}
 	}
 
-	private boolean checkAndDecodeNow(ObjectContainer container, int blockNo, boolean tooSmall, boolean haveDataBlocks) {
+	private synchronized boolean checkAndDecodeNow(ObjectContainer container, int blockNo, boolean tooSmall, boolean haveDataBlocks) {
+		if(startedDecode) return false; // Caller checks anyway but worth checking.
 		boolean decodeNow = true;
 		// Double-check...
 		// This is somewhat defensive, but these things have happened, and caused stalls.
@@ -586,6 +587,7 @@ public class SplitFileFetcherSegment implements FECCallback, HasCooldownTrackerI
 		if(haveDataBlocks && count < dataBuckets.length) {
 			Logger.error(this, "haveDataBlocks is wrong: count is "+count);
 		} else if(haveDataBlocks && count >= dataBuckets.length) {
+			startedDecode = true;
 			return true;
 		}
 		if(lastBlockTruncated) count--;
@@ -696,11 +698,17 @@ public class SplitFileFetcherSegment implements FECCallback, HasCooldownTrackerI
 	}
 
 	public void decode(ObjectContainer container, ClientContext context) {
+		// Concurrency issue (transient only): Only one thread can call decode(), because 
+		// only on one thread will checkAndDecodeNow return true. However, it is possible 
+		// for another thread to fail the download and remove the blocks in the meantime.
 		if(persistent)
 			container.activate(this, 1);
 		// Now decode
 		if(logMINOR) Logger.minor(this, "Decoding "+SplitFileFetcherSegment.this);
 
+		// Determine this early on so it is before segmentFinished or encoderFinished - maximum chance of still having parentFetcher.
+		createdBeforeRestart = createdBeforeRestart(container);
+		
 		if(persistent)
 			container.store(this);
 		
@@ -713,13 +721,16 @@ public class SplitFileFetcherSegment implements FECCallback, HasCooldownTrackerI
 				container.activate(checkBuckets[i], 1);
 		}
 		int data = 0;
-		for(int i=0;i<dataBuckets.length;i++) {
-			if(dataBuckets[i].getData() != null) {
-				data++;
-			} else {
-				// Use flag to indicate that it the block needed to be decoded.
-				dataBuckets[i].flag = true;
-				if(persistent) dataBuckets[i].storeTo(container);
+		synchronized(this) {
+			if(finished || encoderFinished) return;
+			for(int i=0;i<dataBuckets.length;i++) {
+				if(dataBuckets[i].getData() != null) {
+					data++;
+				} else {
+					// Use flag to indicate that it the block needed to be decoded.
+					dataBuckets[i].flag = true;
+					if(persistent) dataBuckets[i].storeTo(container);
+				}
 			}
 		}
 		if(getter != null) {
@@ -746,35 +757,38 @@ public class SplitFileFetcherSegment implements FECCallback, HasCooldownTrackerI
 		
 		if(splitfileType != Metadata.SPLITFILE_NONREDUNDANT) {
 			FECQueue queue = context.fecQueue;
-			// Double-check...
 			int count = 0;
-			for(int i=0;i<dataBuckets.length;i++) {
-				Bucket d = dataBuckets[i].getData();
-				if(d != null) {
-					boolean valid = false;
-					if(i == dataBuckets.length-1) {
-						if(ignoreLastDataBlock) {
-							boolean blockActive = true;
-							if(persistent) {
-								blockActive = container.ext().isActive(d);
-								if(!blockActive) container.activate(d, 1);
-							}
-							if(d.size() >= CHKBlock.DATA_LENGTH)
+			synchronized(this) {
+				if(finished || encoderFinished) return;
+				// Double-check...
+				for(int i=0;i<dataBuckets.length;i++) {
+					Bucket d = dataBuckets[i].getData();
+					if(d != null) {
+						boolean valid = false;
+						if(i == dataBuckets.length-1) {
+							if(ignoreLastDataBlock) {
+								boolean blockActive = true;
+								if(persistent) {
+									blockActive = container.ext().isActive(d);
+									if(!blockActive) container.activate(d, 1);
+								}
+								if(d.size() >= CHKBlock.DATA_LENGTH)
+									valid = true;
+								if(!blockActive) container.deactivate(d, 1);
+							} else {
 								valid = true;
-							if(!blockActive) container.deactivate(d, 1);
+							}
 						} else {
 							valid = true;
 						}
-					} else {
-						valid = true;
+						if(valid)
+							count++;
 					}
-					if(valid)
+				}
+				for(int i=0;i<checkBuckets.length;i++) {
+					if(checkBuckets[i].getData() != null)
 						count++;
 				}
-			}
-			for(int i=0;i<checkBuckets.length;i++) {
-				if(checkBuckets[i].getData() != null)
-					count++;
 			}
 			if(count < dataBuckets.length) {
 				Logger.error(this, "Attempting to decode but only "+count+" of "+dataBuckets.length+" blocks available!", new Exception("error"));
@@ -784,7 +798,15 @@ public class SplitFileFetcherSegment implements FECCallback, HasCooldownTrackerI
 			}
 			if(persistent)
 				container.activate(parent, 1);
-			Bucket lastBlock = dataBuckets[dataBuckets.length-1].getData();
+			MinimalSplitfileBlock block = dataBuckets[dataBuckets.length-1];
+			if(block == null) {
+				synchronized(this) {
+					if(!finished || encoderFinished)
+						Logger.error(this, "Last block wrapper is null yet not finished?!");
+					return;
+				}
+			}
+			Bucket lastBlock = block.getData();
 			if(lastBlock != null) {
 				if(persistent)
 					container.activate(lastBlock, 1);
@@ -802,6 +824,9 @@ public class SplitFileFetcherSegment implements FECCallback, HasCooldownTrackerI
 					// the last data block is too short.
 					fail(new FetchException(FetchException.INVALID_METADATA, "Last data block is not the standard size"), container, context, true);
 				}
+			}
+			synchronized(this) {
+				if(finished || encoderFinished) return;
 			}
 			if(codec == null)
 				codec = FECCodec.getCodec(splitfileType, dataBuckets.length, checkBuckets.length);
@@ -923,9 +948,12 @@ public class SplitFileFetcherSegment implements FECCallback, HasCooldownTrackerI
 				return;
 			}
 			if(heal) {
-				int base = dataRetries[i] == 0 ? 2 : 4;
-				if(context.fastWeakRandom.nextInt(base) != 0)
-					heal = false;
+				// 100% chance if we had to retry since startup, 5% chance otherwise.
+				if(dataRetries[i] == 0) {
+					int odds = createdBeforeRestart ? 10 : 20;
+					if(context.fastWeakRandom.nextInt(odds) != 0)
+						heal = false;
+				}
 			}
 			if(heal) {
 				Bucket wrapper = queueHeal(data, container, context);
@@ -1031,6 +1059,9 @@ public class SplitFileFetcherSegment implements FECCallback, HasCooldownTrackerI
 		}
 	}
 
+	// Set at decode time, before calling segmentFinished or encoderFinished.
+	private boolean createdBeforeRestart;
+
 	public void onEncodedSegment(ObjectContainer container, ClientContext context, FECJob job, Bucket[] dataBuckets2, Bucket[] checkBuckets2, SplitfileBlock[] dataBlockStatus, SplitfileBlock[] checkBlockStatus) {
 		try {
 		if(persistent) {
@@ -1124,9 +1155,12 @@ public class SplitFileFetcherSegment implements FECCallback, HasCooldownTrackerI
 					return;
 				}
 				if(heal) {
-					int base = checkRetries[i] == 0 ? 2 : 4;
-					if(context.fastWeakRandom.nextInt(base) != 0)
-						heal = false;
+					// 100% chance if we had to retry since startup, 5% chance otherwise.
+					if(checkRetries[i] == 0) {
+						int odds = createdBeforeRestart ? 10 : 20;
+						if(context.fastWeakRandom.nextInt(odds) != 0)
+							heal = false;
+					}
 				}
 				if(heal) {
 					Bucket wrapper = queueHeal(data, container, context);
@@ -1167,6 +1201,26 @@ public class SplitFileFetcherSegment implements FECCallback, HasCooldownTrackerI
 			if(persistent)
 				encoderFinished(container, context);
 		}
+	}
+
+	private boolean createdBeforeRestart(ObjectContainer container) {
+		SplitFileFetcher f = parentFetcher;
+		if(f == null) {
+			Logger.error(this, "Created before restart returning false because parent fetcher already gone");
+			return false;
+		}
+		boolean active = true;
+		if(persistent) {
+			active = container.ext().isActive(parentFetcher);
+			if(!active) container.activate(f, 1);
+		}
+		SplitFileFetcherKeyListener listener = f.getListener();
+		if(!active) container.deactivate(f, 1);
+		if(listener == null) {
+			Logger.error(this, "Created before restart return false because no listener");
+			return false;
+		}
+		return listener.loadedOnStartup;
 	}
 
 	boolean isCollectingBinaryBlob() {
@@ -1329,9 +1383,7 @@ public class SplitFileFetcherSegment implements FECCallback, HasCooldownTrackerI
 			if(!getterActive) container.activate(getter, 1);
 		}
 		getter.reschedule(container, context);
-		context.cooldownTracker.clearCachedWakeup(getter, persistent, container, false);
-		// If we didn't actually get queued, we should wake up the starter, for the same reason we clearCachedWakeup().
-		context.getChkFetchScheduler().wakeStarter();
+		getter.clearCooldown(container, context, true);
 		if(!getterActive) container.deactivate(getter, 1);
 		return getter;
 	}
@@ -1705,8 +1757,8 @@ public class SplitFileFetcherSegment implements FECCallback, HasCooldownTrackerI
 	public void resetCooldownTimes(ObjectContainer container, ClientContext context) {
 		if(logMINOR) Logger.minor(this, "Resetting cooldown times on "+this);
 		if(getter != null) {
-			context.cooldownTracker.clearCachedWakeup(getter, persistent, container, false);
-			context.cooldownTracker.clearCachedWakeup(getter.getParentGrabArray(), persistent, container, false);
+			context.cooldownTracker.clearCachedWakeup(getter, persistent, container);
+			context.cooldownTracker.clearCachedWakeup(getter.getParentGrabArray(), persistent, container);
 		}
 		context.getChkFetchScheduler().wakeStarter();
 		// FIXME need a more efficient way to get maxTries!
@@ -2024,12 +2076,13 @@ public class SplitFileFetcherSegment implements FECCallback, HasCooldownTrackerI
 	public void fetcherHalfFinished(ObjectContainer container) {
 		boolean finish = false;
 		synchronized(this) {
+			if(fetcherHalfFinished) return;
 			fetcherHalfFinished = true;
 			finish = encoderFinished;
 		}
 		if(finish) freeDecodedData(container, false);
 		else {
-			if(logMINOR) Logger.minor(this, "Fetcher half-finished but fetcher not finished on "+this);
+			if(logMINOR) Logger.minor(this, "Fetcher half finished on "+this);
 		}
 		if(persistent) container.store(this);
 		
@@ -2038,15 +2091,16 @@ public class SplitFileFetcherSegment implements FECCallback, HasCooldownTrackerI
 	public void fetcherFinished(ObjectContainer container, ClientContext context) {
 		context.cooldownTracker.remove(this, persistent, container);
 		synchronized(this) {
+			if(fetcherFinished) return;
 			fetcherFinished = true;
 			fetcherHalfFinished = true;
 			if(!encoderFinished) {
 				if(!startedDecode) {
 					if(logMINOR) Logger.minor(this, "Never started decode, completing immediately on "+this);
 					encoderFinished = true;
-					container.store(this);
+					if(persistent) container.store(this);
 				} else {
-					container.store(this);
+					if(persistent) container.store(this);
 					if(logMINOR) Logger.minor(this, "Fetcher finished but encoder not finished on "+this);
 					return;
 				}
@@ -2116,29 +2170,6 @@ public class SplitFileFetcherSegment implements FECCallback, HasCooldownTrackerI
 	
 	public final int realDataBlocks() {
 		return dataBuckets.length - crossCheckBlocks;
-	}
-
-	public boolean hasValidKeys(SplitFileFetcherSegmentGet getter, 
-			KeysFetchingLocally fetching, ObjectContainer container, ClientContext context) {
-		if(keys == null) migrateToKeys(container);
-		else {
-			if(persistent) container.activate(keys, 1);
-		}
-		long now = System.currentTimeMillis();
-		int maxTries = getMaxRetries(container);
-		synchronized(this) {
-			if(startedDecode || isFinishing(container)) return false;
-			for(int i=0;i<dataBuckets.length+checkBuckets.length;i++) {
-				if(foundKeys[i]) continue;
-				if(getCooldownWakeup(i, maxTries, container, context) > now) continue;
-				// Double check
-				if(getBlockBucket(i, container) != null) continue;
-				Key key = keys.getNodeKey(i, null, true);
-				if(fetching.hasKey(key, getter, persistent, container)) continue;
-				return true;
-			}
-		}
-		return false;
 	}
 
 	/**

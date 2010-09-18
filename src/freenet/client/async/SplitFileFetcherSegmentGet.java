@@ -183,12 +183,6 @@ public class SplitFileFetcherSegmentGet extends SendableGet implements SupportsB
 	}
 
 	@Override
-	public void resetCooldownTimes(ObjectContainer container, ClientContext context) {
-		if(persistent) container.activate(segment, 1);
-		segment.resetCooldownTimes(container, context);
-	}
-
-	@Override
 	public void requeueAfterCooldown(Key key, long time,
 			ObjectContainer container, ClientContext context) {
 		if(persistent) container.activate(segment, 1);
@@ -217,13 +211,6 @@ public class SplitFileFetcherSegmentGet extends SendableGet implements SupportsB
 			if(persistent) container.activate(blocks, 1);
 			return blocks;
 		} else return null;
-	}
-
-	@Override
-	public boolean hasValidKeys(KeysFetchingLocally fetching,
-			ObjectContainer container, ClientContext context) {
-		if(persistent) container.activate(segment, 1);
-		return segment.hasValidKeys(this, fetching, container, context);
 	}
 
 	@Override
@@ -314,7 +301,7 @@ public class SplitFileFetcherSegmentGet extends SendableGet implements SupportsB
 		HasCooldownCacheItem parentRGA = getParentGrabArray();
 		long wakeTime = segment.getCooldownTime(container, context, parentRGA, now);
 		if(wakeTime > 0)
-			context.cooldownTracker.setCachedWakeup(wakeTime, this, parentRGA, persistent, container);
+			context.cooldownTracker.setCachedWakeup(wakeTime, this, parentRGA, persistent, container, true);
 		return wakeTime;
 	}
 

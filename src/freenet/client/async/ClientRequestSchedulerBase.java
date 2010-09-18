@@ -129,7 +129,7 @@ abstract class ClientRequestSchedulerBase {
 			Logger.normal(this, "Priority "+req.getPriorityClass(container));
 		}
 		short prio = req.getPriorityClass(container);
-		if(logMINOR) Logger.minor(this, "Still registering "+req+" at prio "+prio+" for "+req.getClientRequest());
+		if(logMINOR) Logger.minor(this, "Still registering "+req+" at prio "+prio+" for "+req.getClientRequest()+" ssk="+this.isSSKScheduler+" insert="+this.isInsertScheduler);
 		addToRequestsByClientRequest(req.getClientRequest(), req, container);
 		addToGrabArray(prio, req.getClient(container), req.getClientRequest(), req, random, container, context);
 		if(logMINOR) Logger.minor(this, "Registered "+req+" on prioclass="+prio);
@@ -174,7 +174,7 @@ abstract class ClientRequestSchedulerBase {
 				if(logMINOR)
 					Logger.minor(this, "Creating new grabber: "+requestGrabber+" for "+client+" from "+clientGrabber+" : prio="+priorityClass);
 				clientGrabber.addGrabber(client, requestGrabber, container, context);
-				context.cooldownTracker.clearCachedWakeup(clientGrabber, persistent(), container, false);
+				context.cooldownTracker.clearCachedWakeup(clientGrabber, persistent(), container);
 			}
 			requestGrabber.add(cr, req, container, context);
 		}

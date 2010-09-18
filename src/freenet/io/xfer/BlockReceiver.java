@@ -39,6 +39,19 @@ import freenet.support.Logger.LogLevel;
 import freenet.support.math.MedianMeanRunningAverage;
 
 /**
+ * IMPORTANT: The receiver can cancel the incoming transfer. This may or may not, 
+ * depending on the caller, result in the PRB being cancelled, and thus propagate back to
+ * the originator.
+ * 
+ * This allows for a weak DoS, in that a node can start a request and then cancel it, 
+ * having wasted a certain amount of upstream bandwidth on transferring data, especially
+ * if upstream has lots of bandwidth and the attacker has limited bandwidth in the victim
+ * -> attacker direction. However this behaviour can be detected fairly easily.
+ * 
+ * If we allow receiver cancels and don't propagate, a more serious DoS is possible. If we
+ * don't allow receiver cancels, we have to get rid of turtles, and massively tighten up
+ * transfer timeouts.
+ * 
  * @author ian
  */
 public class BlockReceiver implements AsyncMessageFilterCallback {
@@ -211,8 +224,8 @@ public class BlockReceiver implements AsyncMessageFilterCallback {
 		} catch(NotConnectedException e) {
 		    throw new RetrievalException(RetrievalException.SENDER_DISCONNECTED);
 		} catch(AbortedException e) {
-			// We didn't cause it?!
-			Logger.error(this, "Caught in receive - probably a bug as receive sets it: "+e);
+			// Possible if cancelled the transfer.
+			Logger.normal(this, "Caught in receive: "+e+" : "+_prb._abortReason+" : "+_prb._abortDescription);
 			throw new RetrievalException(RetrievalException.UNKNOWN, "Aborted?");
 		} finally {
 			try {

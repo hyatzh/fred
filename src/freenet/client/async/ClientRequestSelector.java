@@ -144,7 +144,7 @@ class ClientRequestSelector implements KeysFetchingLocally {
 					long cooldownTime = context.cooldownTracker.getCachedWakeup(result, false, container, now);
 					if(cooldownTime > 0) {
 						if(cooldownTime < wakeupTime) wakeupTime = cooldownTime;
-						Logger.normal(this, "Priority "+priority+" (transient) is in cooldown for another "+(cooldownTime - now)+" "+TimeUtil.formatTime(cooldownTime - now));
+						Logger.normal(this, "Priority "+priority+" (transient) is in cooldown for another "+(cooldownTime - now)+" "+TimeUtil.formatTime(cooldownTime - now)+" : "+result);
 						result = null;
 					}
 				}
@@ -267,7 +267,7 @@ class ClientRequestSelector implements KeysFetchingLocally {
 		}
 		boolean tryOfferedKeys = offeredKeys != null && (!notTransient) && random.nextBoolean();
 		if(tryOfferedKeys) {
-			if(offeredKeys.hasValidKeys(this, null, context))
+			if(offeredKeys.getCooldownTime(container, context, now) == 0)
 				return new SelectorReturn(offeredKeys);
 		}
 		long l = removeFirstAccordingToPriorities(fuzz, random, schedCore, schedTransient, transientOnly, maxPrio, container, context, now);
@@ -278,7 +278,7 @@ class ClientRequestSelector implements KeysFetchingLocally {
 		int choosenPriorityClass = (int)l;
 		if(choosenPriorityClass == -1) {
 			if((!notTransient) && !tryOfferedKeys) {
-				if(offeredKeys != null && offeredKeys.hasValidKeys(this, null, context))
+				if(offeredKeys != null && offeredKeys.getCooldownTime(container, context, now) == 0)
 					return new SelectorReturn(offeredKeys);
 			}
 			if(logMINOR)
@@ -639,13 +639,13 @@ outer:	for(;choosenPriorityClass <= maxPrio;choosenPriorityClass++) {
 				CooldownTracker tracker = sched.clientContext.cooldownTracker;
 				if(persistentWaiting != null) {
 					for(Long l : persistentWaiting)
-						tracker.clearCachedWakeupPersistent(l, true);
+						tracker.clearCachedWakeupPersistent(l);
 				}
 				if(transientWaiting != null) {
 					for(WeakReference<BaseSendableGet> ref : transientWaiting) {
 						BaseSendableGet get = ref.get();
 						if(get == null) continue;
-						tracker.clearCachedWakeup(get, false, null, true);
+						tracker.clearCachedWakeup(get, false, null);
 					}
 				}
 			}

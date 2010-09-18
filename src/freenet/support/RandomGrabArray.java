@@ -1,5 +1,7 @@
 package freenet.support;
 
+import org.tanukisoftware.wrapper.WrapperManager;
+
 import com.db4o.ObjectContainer;
 
 import freenet.client.async.ClientContext;
@@ -30,7 +32,7 @@ public class RandomGrabArray implements RemoveRandom, HasCooldownCacheItem {
 	private int index;
 	private final static int MIN_SIZE = 32;
 	private final static int BLOCK_SIZE = 1024;
-	private final boolean persistent;
+	protected final boolean persistent;
 	private final int hashCode;
 	private RemoveRandomParent parent;
 
@@ -56,6 +58,10 @@ public class RandomGrabArray implements RemoveRandom, HasCooldownCacheItem {
 		}
 		req.setParentGrabArray(this, container); // will store() self
 		synchronized(this) {
+			if(context != null) {
+				context.cooldownTracker.clearCachedWakeup(req, persistent, container);
+				context.cooldownTracker.clearCachedWakeup(this, persistent, container);
+			}
 			int x = 0;
 			if(blocks.length == 1 && index < BLOCK_SIZE) {
 				if(persistent) container.activate(blocks[0], 1);
@@ -78,7 +84,6 @@ public class RandomGrabArray implements RemoveRandom, HasCooldownCacheItem {
 					container.store(this);
 					container.deactivate(blocks[0], 1);
 				}
-				if(context != null) context.cooldownTracker.clearCachedWakeup(this, persistent, container, false);
 				return;
 			}
 			int targetBlock = index / BLOCK_SIZE;
@@ -212,7 +217,9 @@ public class RandomGrabArray implements RemoveRandom, HasCooldownCacheItem {
 				// Tell it that it's been removed first.
 				oret.setParentGrabArray(null, container);
 			}
-			if(ret != null && (itemWakeTime > 0 || excluding.exclude(ret, container, context))) {
+			if(itemWakeTime == 0)
+				itemWakeTime = excluding.exclude(ret, container, context, now);
+			if(ret != null && itemWakeTime > 0) {
 				excluded++;
 				if(persistent)
 					container.deactivate(ret, 1);
@@ -274,7 +281,7 @@ public class RandomGrabArray implements RemoveRandom, HasCooldownCacheItem {
 					container.deactivate(oldBlocks[blockNo], 1);
 				}
 			}
-			if(changedMe)
+			if(changedMe && persistent)
 				container.store(this);
 			return ret;
 		}
@@ -359,8 +366,13 @@ public class RandomGrabArray implements RemoveRandom, HasCooldownCacheItem {
 						if(itemWakeTime < wakeupTime) wakeupTime = itemWakeTime;
 						excludeItem = true;
 					}
-					if(!excludeItem)
-						excludeItem = excluding.exclude(item, container, context);
+					if(!excludeItem) {
+						itemWakeTime = excluding.exclude(item, container, context, now);
+						if(itemWakeTime > 0) {
+							if(itemWakeTime < wakeupTime) wakeupTime = itemWakeTime;
+							excludeItem = true;
+						}
+					}
 				}
 				writeOffset++;
 				if(writeOffset == BLOCK_SIZE) {
@@ -683,6 +695,7 @@ public class RandomGrabArray implements RemoveRandom, HasCooldownCacheItem {
 	// At present it is only called on startup so this is okay.
 	public void moveElementsTo(RandomGrabArray existingGrabber,
 			ObjectContainer container, boolean canCommit) {
+		WrapperManager.signalStarting(5*60*1000);
 		for(int i=0;i<blocks.length;i++) {
 			Block block = blocks[i];
 			if(persistent) container.activate(block, 1);

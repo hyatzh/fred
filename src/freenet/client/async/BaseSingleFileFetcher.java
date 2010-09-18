@@ -23,11 +23,12 @@ import freenet.node.RequestScheduler;
 import freenet.node.SendableGet;
 import freenet.node.SendableRequestItem;
 import freenet.support.Logger;
+import freenet.support.RandomGrabArray;
 import freenet.support.TimeUtil;
 
 public abstract class BaseSingleFileFetcher extends SendableGet implements HasKeyListener, HasCooldownTrackerItem {
 
-	public class MyCooldownTrackerItem implements CooldownTrackerItem {
+	public static class MyCooldownTrackerItem implements CooldownTrackerItem {
 
 		public int retryCount;
 		public long cooldownWakeupTime;
@@ -91,13 +92,6 @@ public abstract class BaseSingleFileFetcher extends SendableGet implements HasKe
 	}
 	
 	@Override
-	public boolean hasValidKeys(KeysFetchingLocally fetching, ObjectContainer container, ClientContext context) {
-		if(persistent)
-			container.activate(key, 5);
-		return !fetching.hasKey(key.getNodeKey(false), this, persistent, container);
-	}
-	
-	@Override
 	public ClientKey getKey(Object token, ObjectContainer container) {
 		if(persistent)
 			container.activate(key, 5);
@@ -142,15 +136,14 @@ public abstract class BaseSingleFileFetcher extends SendableGet implements HasKe
 						container.activate(key, 5);
 					RequestScheduler sched = context.getFetchScheduler(key instanceof ClientSSK);
 					tracker.cooldownWakeupTime = sched.queueCooldown(key, this, container);
-					context.cooldownTracker.setCachedWakeup(tracker.cooldownWakeupTime, this, getParentGrabArray(), persistent, container);
+					context.cooldownTracker.setCachedWakeup(tracker.cooldownWakeupTime, this, getParentGrabArray(), persistent, container, true);
 					if(logMINOR) Logger.minor(this, "Added single file fetcher into cooldown until "+TimeUtil.formatTime(tracker.cooldownWakeupTime - now));
 					if(persistent)
 						container.deactivate(key, 5);
 				}
 			} else {
 				// Wake the CRS after clearing cache.
-				context.getFetchScheduler(isSSK()).wakeStarter();
-				context.cooldownTracker.clearCachedWakeup(this, persistent, container, false);
+				this.clearCooldown(container, context, true);
 			}
 			return true; // We will retry in any case, maybe not just not yet. See requeueAfterCooldown(Key).
 		}
@@ -269,14 +262,6 @@ public abstract class BaseSingleFileFetcher extends SendableGet implements HasKe
 	}
 	
 	@Override
-	public synchronized void resetCooldownTimes(ObjectContainer container, ClientContext context) {
-		MyCooldownTrackerItem tracker = makeCooldownTrackerItem(container, context);
-		tracker.cooldownWakeupTime = -1;
-		context.cooldownTracker.clearCachedWakeup(this, persistent, container, false);
-		context.cooldownTracker.clearCachedWakeup(getParentGrabArray(), persistent, container, false);
-	}
-
-	@Override
 	public void requeueAfterCooldown(Key key, long time, ObjectContainer container, ClientContext context) {
 		MyCooldownTrackerItem tracker = makeCooldownTrackerItem(container, context);
 		if(tracker.cooldownWakeupTime > time) {
@@ -352,7 +337,7 @@ public abstract class BaseSingleFileFetcher extends SendableGet implements HasKe
 		return Collections.singletonList(block);
 	}
 
-	public KeyListener makeKeyListener(ObjectContainer container, ClientContext context) {
+	public KeyListener makeKeyListener(ObjectContainer container, ClientContext context, boolean onStartup) {
 		if(persistent) {
 			container.activate(key, 5);
 			container.activate(parent, 1);

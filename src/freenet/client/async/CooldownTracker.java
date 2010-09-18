@@ -34,7 +34,7 @@ public class CooldownTracker {
 	private static volatile boolean logDEBUG;
 
 	static {
-		Logger.registerClass(ContainerInserter.class);
+		Logger.registerClass(CooldownTracker.class);
 	}
 
 	/** Persistent CooldownTrackerItem's by Db4o ID */
@@ -103,8 +103,13 @@ public class CooldownTracker {
 			return item.timeValid;
 		}
 	}
-	
+
 	public synchronized void setCachedWakeup(long wakeupTime, HasCooldownCacheItem toCheck, HasCooldownCacheItem parent, boolean persistent, ObjectContainer container) {
+		setCachedWakeup(wakeupTime, toCheck, parent, persistent, container, false);
+	}
+	
+	public synchronized void setCachedWakeup(long wakeupTime, HasCooldownCacheItem toCheck, HasCooldownCacheItem parent, boolean persistent, ObjectContainer container, boolean dontLogOnClearingParents) {
+		if(logMINOR) Logger.minor(this, "Wakeup time "+wakeupTime+" set for "+toCheck+" parent is "+parent);
 		if(persistent) {
 			if(!container.ext().isStored(toCheck)) throw new IllegalArgumentException("Must store first!");
 			long uid = container.ext().getID(toCheck);
@@ -112,16 +117,35 @@ public class CooldownTracker {
 			long parentUID = parent == null ? -1 : container.ext().getID(parent);
 			PersistentCooldownCacheItem item = cacheItemsPersistent.get(uid);
 			if(item == null) {
-				cacheItemsPersistent.put(uid, new PersistentCooldownCacheItem(wakeupTime, parentUID));
+				cacheItemsPersistent.put(uid, item = new PersistentCooldownCacheItem(wakeupTime, parentUID));
 			} else {
 				if(item.timeValid < wakeupTime)
 					item.timeValid = wakeupTime;
 				item.parentID = parentUID;
 			}
+			if(parentUID != -1) {
+				// All items above this should have a wakeup time no later than this.
+				while(true) {
+					PersistentCooldownCacheItem checkParent = cacheItemsPersistent.get(parentUID);
+					if(checkParent == null) break;
+					if(checkParent.timeValid < item.timeValid) break;
+					else if(checkParent.timeValid > item.timeValid) {
+						if(!dontLogOnClearingParents)
+							Logger.error(this, "Corrected parent timeValid from "+checkParent.timeValid+" to "+item.timeValid, new Exception("debug"));
+						else {
+							if(logMINOR) 
+								Logger.minor(this, "Corrected parent timeValid from "+checkParent.timeValid+" to "+item.timeValid);
+						}
+						checkParent.timeValid = item.timeValid;
+					}
+					parentUID = checkParent.parentID;
+					if(parentUID < 0) break;
+				}
+			}
 		} else {
 			TransientCooldownCacheItem item = cacheItemsTransient.get(toCheck);
 			if(item == null) {
-				cacheItemsTransient.put(toCheck, new TransientCooldownCacheItem(wakeupTime, parent));
+				cacheItemsTransient.put(toCheck, item = new TransientCooldownCacheItem(wakeupTime, parent));
 			} else {
 				if(item.timeValid < wakeupTime)
 					item.timeValid = wakeupTime;
@@ -130,6 +154,25 @@ public class CooldownTracker {
 						item.parent = null;
 					else
 						item.parent = new WeakReference<HasCooldownCacheItem>(parent);
+				}
+			}
+			if(parent != null) {
+				// All items above this should have a wakeup time no later than this.
+				while(true) {
+					TransientCooldownCacheItem checkParent = cacheItemsTransient.get(parent);
+					if(checkParent == null) break;
+					if(checkParent.timeValid < item.timeValid) break;
+					else if(checkParent.timeValid > item.timeValid) {
+						if(!dontLogOnClearingParents)
+							Logger.error(this, "Corrected parent timeValid from "+checkParent.timeValid+" to "+item.timeValid, new Exception("debug"));
+						else {
+							if(logMINOR) 
+								Logger.minor(this, "Corrected parent timeValid from "+checkParent.timeValid+" to "+item.timeValid);
+						}
+						checkParent.timeValid = item.timeValid;
+					}
+					parent = checkParent.parent.get();
+					if(parent == null) break;
 				}
 			}
 		}
@@ -160,53 +203,44 @@ public class CooldownTracker {
 	 * @param toCheck
 	 * @param persistent
 	 * @param container
-	 * @param cascadeOnlyIfEqual Only remove the items above this one if they are 
-	 * dependant on this one i.e. their time is equal to it. If we are removing a cooldown
-	 * because we are adding a request, we should always cascade; but if we are removing 
-	 * it because a request is finished, we should cascade only if the request was the 
-	 * limiting factor. Note that this means for a request which is retries, we must be 
-	 * called with cascadeOnlyIfEqual = true initially on completion, and then again with
-	 * cascadeOnlyIfEqual = false on retrying the block. Whereas if we decide to cooldown
-	 * we would call setCachedWakeup instead.
 	 */
-	public synchronized boolean clearCachedWakeup(HasCooldownCacheItem toCheck, boolean persistent, ObjectContainer container, boolean cascadeOnlyIfEqual) {
+	public synchronized boolean clearCachedWakeup(HasCooldownCacheItem toCheck, boolean persistent, ObjectContainer container) {
 		if(toCheck == null) {
 			Logger.error(this, "Clearing cached wakeup for null", new Exception("error"));
 			return false;
 		}
+		if(logMINOR) Logger.minor(this, "Clearing cached wakeup for "+toCheck);
 		if(persistent) {
 			if(!container.ext().isStored(toCheck)) throw new IllegalArgumentException("Must store first!");
 			long uid = container.ext().getID(toCheck);
-			return clearCachedWakeupPersistent(uid, cascadeOnlyIfEqual);
+			return clearCachedWakeupPersistent(uid);
 		} else {
 			boolean ret = false;
-			long prevTime = Long.MAX_VALUE;
 			while(true) {
 				TransientCooldownCacheItem item = cacheItemsTransient.get(toCheck);
 				if(item == null) return ret;
-				long time = item.timeValid;
-				if(cascadeOnlyIfEqual && time != prevTime) return ret;
+				if(logMINOR) Logger.minor(this, "Clearing "+toCheck);
 				ret = true;
 				cacheItemsTransient.remove(toCheck);
 				toCheck = item.parent.get();
 				if(toCheck == null) return ret;
+				if(logMINOR) Logger.minor(this, "Parent is "+toCheck);
 			}
 		}
 
 	}
 	
-	public synchronized boolean clearCachedWakeupPersistent(Long uid, boolean cascadeOnlyIfEqual) {
+	public synchronized boolean clearCachedWakeupPersistent(Long uid) {
 		boolean ret = false;
-		long prevTime = Long.MAX_VALUE;
 		while(true) {
 			PersistentCooldownCacheItem item = cacheItemsPersistent.get(uid);
 			if(item == null) return ret;
-			long time = item.timeValid;
-			if(cascadeOnlyIfEqual && time != prevTime) return ret;
+			if(logMINOR) Logger.minor(this, "Clearing "+uid);
 			ret = true;
 			cacheItemsPersistent.remove(uid);
 			uid = item.parentID;
 			if(uid == -1) return ret;
+			if(logMINOR) Logger.minor(this, "Parent is "+uid);
 		}
 	}
 

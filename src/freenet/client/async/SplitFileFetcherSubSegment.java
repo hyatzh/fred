@@ -152,13 +152,6 @@ public class SplitFileFetcherSubSegment extends SendableGet implements SupportsB
 		}
 	}
 
-	@Override
-	public boolean hasValidKeys(KeysFetchingLocally keys, ObjectContainer container, ClientContext context) {
-		// This is safe because it won't be removed from the RGA.
-		queueMigrateToSegmentFetcher(container, context);
-		return false;
-	}
-	
 	// SendableGet has a hashCode() and inherits equals(), which is consistent with the hashCode().
 	
 	public void onFailure(BulkCallFailureItem[] items, ObjectContainer container, ClientContext context) {
@@ -316,18 +309,6 @@ public class SplitFileFetcherSubSegment extends SendableGet implements SupportsB
 				container.deactivate(segment, 1);
 		}
 		return ret;
-	}
-
-	@Override
-	public void resetCooldownTimes(ObjectContainer container, ClientContext context) {
-		if(persistent) {
-			container.activate(this, 1);
-			container.activate(segment, 1);
-		}
-		synchronized(segment) {
-			segment.resetCooldownTimes(container, context);
-		}
-		migrateToSegmentFetcher(container, context);
 	}
 
 	public void reschedule(ObjectContainer container, ClientContext context) {

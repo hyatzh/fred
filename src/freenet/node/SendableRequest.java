@@ -145,4 +145,29 @@ public abstract class SendableRequest implements RandomGrabArrayItem {
 		return false;
 	}
 
+	/** Must be called when we retry a block. */
+	public void clearCooldown(ObjectContainer container, ClientContext context, boolean definitelyExists) {
+		if(persistent && !container.ext().isStored(this)) {
+			if(definitelyExists)
+				Logger.error(this, "Clear cooldown on persistent request "+this+" but already removed");
+			else if(hashCode != 0) // conceivably there might be a problem, but unlikely 
+				Logger.normal(this, "Clear cooldown on persistent request "+this+" but already removed");
+			else // removed, not likely to be an issue.
+				Logger.minor(this, "Clear cooldown on persistent request "+this+" but already removed");
+			return;
+		}
+		// The request is no longer running, therefore presumably it can be selected, or it's been removed.
+		// Stuff that uses the cooldown queue will set or clear depending on whether we retry, but
+		// we clear here for stuff that doesn't use it.
+		// Note also that the performance cost of going over that particular part of the tree again should be very low.
+		context.cooldownTracker.clearCachedWakeup(this, persistent, container);
+		// It is possible that the parent was added to the cache because e.g. a request was running for the same key.
+		// We should wake up the parent as well even if this item is not in cooldown.
+		RandomGrabArray rga = getParentGrabArray();
+		if(rga != null)
+			context.cooldownTracker.clearCachedWakeup(rga, persistent, container);
+		// If we didn't actually get queued, we should wake up the starter, for the same reason we clearCachedWakeup().
+		getScheduler(context).wakeStarter();
+	}
+
 }
