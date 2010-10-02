@@ -62,9 +62,9 @@ public class PeerManager {
 	private String openFilename;
 	private PeerManagerUserAlert ua;	// Peers stuff
 	/** age of oldest never connected peer (milliseconds) */
-	private long oldestNeverConnectedPeerAge;
+	private long oldestNeverConnectedDarknetPeerAge;
 	/** Next time to update oldestNeverConnectedPeerAge */
-	private long nextOldestNeverConnectedPeerAgeUpdateTime = -1;
+	private long nextOldestNeverConnectedDarknetPeerAgeUpdateTime = -1;
 	/** oldestNeverConnectedPeerAge update interval (milliseconds) */
 	private static final long oldestNeverConnectedPeerAgeUpdateInterval = 5000;
 	/** Next time to log the PeerNode status summary */
@@ -795,8 +795,8 @@ public class PeerManager {
 	}
 
 	public PeerNode closerPeer(PeerNode pn, Set<PeerNode> routedTo, double loc, boolean ignoreSelf, boolean calculateMisrouting,
-	        int minVersion, List<Double> addUnpickedLocsTo, Key key, short outgoingHTL, int ignoreBackoffUnder) {
-		return closerPeer(pn, routedTo, loc, ignoreSelf, calculateMisrouting, minVersion, addUnpickedLocsTo, 2.0, key, outgoingHTL, ignoreBackoffUnder);
+	        int minVersion, List<Double> addUnpickedLocsTo, Key key, short outgoingHTL, int ignoreBackoffUnder, boolean isLocal) {
+		return closerPeer(pn, routedTo, loc, ignoreSelf, calculateMisrouting, minVersion, addUnpickedLocsTo, 2.0, key, outgoingHTL, ignoreBackoffUnder, isLocal);
 	}
 
 	/**
@@ -810,9 +810,12 @@ public class PeerManager {
 	 * @param maxDistance If a node is further away from the target than this distance, ignore it.
 	 * @param key The original key, if we have it, and if we want to consult with the FailureTable
 	 * to avoid routing to nodes which have recently failed for the same key.
+	 * @param isLocal We don't just check pn == null because in some cases pn can be null here: If an insert is forked, for
+	 * a remote requests, we can route back to the originator, so we set pn to null. Whereas for stats we want to know 
+	 * accurately whether this was originated remotely.
 	 */
 	public PeerNode closerPeer(PeerNode pn, Set<PeerNode> routedTo, double target, boolean ignoreSelf,
-	        boolean calculateMisrouting, int minVersion, List<Double> addUnpickedLocsTo, double maxDistance, Key key, short outgoingHTL, int ignoreBackoffUnder) {
+	        boolean calculateMisrouting, int minVersion, List<Double> addUnpickedLocsTo, double maxDistance, Key key, short outgoingHTL, int ignoreBackoffUnder, boolean isLocal) {
 		PeerNode[] peers;
 		synchronized(this) {
 			peers = connectedPeers;
@@ -1046,7 +1049,8 @@ public class PeerManager {
 		if(best != null) {
 			//racy... getLocation() could have changed
 			if(calculateMisrouting) {
-				node.nodeStats.routingMissDistance.report(Location.distance(best, closest.getLocation()));
+				node.nodeStats.routingMissDistanceOverall.report(Location.distance(best, closest.getLocation()));
+				(isLocal ? node.nodeStats.routingMissDistanceLocal : node.nodeStats.routingMissDistanceRemote).report(Location.distance(best, closest.getLocation()));
 				int numberOfConnected = getPeerNodeStatusSize(PEER_NODE_STATUS_CONNECTED, false);
 				int numberOfRoutingBackedOff = getPeerNodeStatusSize(PEER_NODE_STATUS_ROUTING_BACKED_OFF, false);
 				if(numberOfRoutingBackedOff + numberOfConnected > 0)
@@ -1360,27 +1364,28 @@ public class PeerManager {
 	/**
 	 * Update oldestNeverConnectedPeerAge if the timer has expired
 	 */
-	public void maybeUpdateOldestNeverConnectedPeerAge(long now) {
+	public void maybeUpdateOldestNeverConnectedDarknetPeerAge(long now) {
 		synchronized(this) {
-			if(now <= nextOldestNeverConnectedPeerAgeUpdateTime)
+			if(now <= nextOldestNeverConnectedDarknetPeerAgeUpdateTime)
 				return;
-			nextOldestNeverConnectedPeerAgeUpdateTime = now + oldestNeverConnectedPeerAgeUpdateInterval;
+			nextOldestNeverConnectedDarknetPeerAgeUpdateTime = now + oldestNeverConnectedPeerAgeUpdateInterval;
 		}
-		oldestNeverConnectedPeerAge = 0;
+		oldestNeverConnectedDarknetPeerAge = 0;
 		PeerNode[] peerList = myPeers;
 		for(int i = 0; i < peerList.length; i++) {
 			PeerNode pn = peerList[i];
+			if(!pn.isDarknet()) continue;
 			if(pn.getPeerNodeStatus() == PEER_NODE_STATUS_NEVER_CONNECTED)
-				if((now - pn.getPeerAddedTime()) > oldestNeverConnectedPeerAge)
-					oldestNeverConnectedPeerAge = now - pn.getPeerAddedTime();
+				if((now - pn.getPeerAddedTime()) > oldestNeverConnectedDarknetPeerAge)
+					oldestNeverConnectedDarknetPeerAge = now - pn.getPeerAddedTime();
 		}
-		if(oldestNeverConnectedPeerAge > 0 && logMINOR)
-			Logger.minor(this, "Oldest never connected peer is " + oldestNeverConnectedPeerAge + "ms old");
-		nextOldestNeverConnectedPeerAgeUpdateTime = now + oldestNeverConnectedPeerAgeUpdateInterval;
+		if(oldestNeverConnectedDarknetPeerAge > 0 && logMINOR)
+			Logger.minor(this, "Oldest never connected peer is " + oldestNeverConnectedDarknetPeerAge + "ms old");
+		nextOldestNeverConnectedDarknetPeerAgeUpdateTime = now + oldestNeverConnectedPeerAgeUpdateInterval;
 	}
 
-	public long getOldestNeverConnectedPeerAge() {
-		return oldestNeverConnectedPeerAge;
+	public long getOldestNeverConnectedDarknetPeerAge() {
+		return oldestNeverConnectedDarknetPeerAge;
 	}
 
 	/**

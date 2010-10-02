@@ -20,6 +20,7 @@ package freenet.io.xfer;
 
 import java.util.LinkedList;
 
+import freenet.io.comm.AsyncMessageCallback;
 import freenet.io.comm.ByteCounter;
 import freenet.io.comm.DMT;
 import freenet.io.comm.DisconnectedException;
@@ -66,6 +67,7 @@ public class BlockTransmitter {
 	final MessageCore _usm;
 	final PeerContext _destination;
 	private boolean _sendComplete;
+	private boolean _sentSendAborted;
 	final long _uid;
 	final PartiallyReceivedBlock _prb;
 	private LinkedList<Integer> _unsent;
@@ -115,17 +117,22 @@ public class BlockTransmitter {
 					}
 					int totalPackets;
 					try {
-						_destination.sendThrottledMessage(DMT.createPacketTransmit(_uid, packetNo, _sentPackets, _prb.getPacket(packetNo)), _prb._packetSize, _ctr, SEND_TIMEOUT, false, null);
+						_destination.sendThrottledMessage(DMT.createPacketTransmit(_uid, packetNo, _sentPackets, _prb.getPacket(packetNo)), _prb._packetSize, _ctr, SEND_TIMEOUT, false, new MyAsyncMessageCallback());
 						totalPackets=_prb.getNumPackets();
 					} catch (PeerRestartedException e) {
 						Logger.normal(this, "Terminating send due to peer restart: "+e);
 						synchronized(_senderThread) {
 							_sendComplete = true;
+							_senderThread.notifyAll();
 						}
 						return;
 					} catch (NotConnectedException e) {
 						Logger.normal(this, "Terminating send: "+e);
-						//the send() thread should notice...
+						//the send() thread should notice... but lets not take any chances, it might reconnect.
+						synchronized(_senderThread) {
+							_sendComplete = true;
+							_senderThread.notifyAll();
+						}
 						return;
 					} catch (AbortedException e) {
 						Logger.normal(this, "Terminating send due to abort: "+e);
@@ -135,10 +142,15 @@ public class BlockTransmitter {
 						Logger.normal(this, "Waited too long to send packet, aborting");
 						synchronized(_senderThread) {
 							_sendComplete = true;
+							_senderThread.notifyAll();
 						}
 						return;
 					} catch (SyncSendWaitedTooLongException e) {
-						// Impossible
+						// Impossible, but lets cancel it anyway
+						synchronized(_senderThread) {
+							_sendComplete = true;
+							_senderThread.notifyAll();
+						}
 						Logger.error(this, "Impossible: Caught "+e, e);
 						return;
 					}
@@ -147,6 +159,10 @@ public class BlockTransmitter {
 						if(_unsent.size() == 0 && getNumSent() == totalPackets) {
 							//No unsent packets, no unreceived packets
 							sendAllSentNotification();
+							if(waitForAsyncBlockSends()) {
+								// Re-check
+								if(_unsent.size() != 0) continue;
+							}
 							timeAllSent = System.currentTimeMillis();
 							if(logMINOR)
 								Logger.minor(this, "Sent all blocks, none unsent");
@@ -162,15 +178,29 @@ public class BlockTransmitter {
 		};
 	}
 
+	/** Abort the send, and then send the sendAborted message. Don't do anything if the
+	 * send has already been aborted. */
 	public void abortSend(int reason, String desc) throws NotConnectedException {
 		synchronized(this) {
 			if(_sendComplete) return;
 			_sendComplete = true;
+			if(_sentSendAborted) return;
+			_sentSendAborted = true;
 		}
-		sendAborted(reason, desc);
+		innerSendAborted(reason, desc);
 	}
 	
+	/** Send the sendAborted message. Only send it once. Send it even if we have already
+	 * aborted, we are called in some cases when the PRB aborts. */
 	public void sendAborted(int reason, String desc) throws NotConnectedException {
+		synchronized(this) {
+			if(_sentSendAborted) return;
+			_sentSendAborted = true;
+		}
+		innerSendAborted(reason, desc);
+	}
+	
+	public void innerSendAborted(int reason, String desc) throws NotConnectedException {
 		_usm.send(_destination, DMT.createSendAborted(_uid, reason, desc), _ctr);
 	}
 	
@@ -224,6 +254,18 @@ public class BlockTransmitter {
 					}
 
 					public void receiveAborted(int reason, String description) {
+						synchronized(_senderThread) {
+							timeAllSent = -1;
+							_sendComplete = true;
+							_senderThread.notifyAll();
+							if(_sentSendAborted) return;
+							_sentSendAborted = true;
+						}
+						try {
+							innerSendAborted(reason, description);
+						} catch (NotConnectedException e) {
+							// Ignore
+						}
 					}
 				});
 			}
@@ -233,6 +275,8 @@ public class BlockTransmitter {
 				synchronized(_senderThread) {
 					if(_sendComplete) return false;
 				}
+				// Check for abort, even if timeAllSent is never set.
+				_prb.getNumPackets();
 				Message msg;
 				try {
 					MessageFilter mfMissingPacketNotification = MessageFilter.create().setType(DMT.missingPacketNotification).setField(DMT.UID, _uid).setTimeout(SEND_TIMEOUT).setSource(_destination);
@@ -294,6 +338,7 @@ public class BlockTransmitter {
 				} else if (msg.getSpec().equals(DMT.sendAborted)) {
 					if(abortHandler.onAbort())
 						_prb.abort(RetrievalException.CANCELLED_BY_RECEIVER, "Cascading cancel from receiver");
+					sendAborted(msg.getInt(DMT.REASON), msg.getString(DMT.DESCRIPTION));
 					return false;
 				} else {
 					Logger.error(this, "Transmitter received unknown message type: "+msg.getSpec().getName());
@@ -322,6 +367,76 @@ public class BlockTransmitter {
 			}
 			if (myListener!=null)
 				_prb.removeListener(myListener);
+			waitForAsyncBlockSends();
+		}
+	}
+
+	private class MyAsyncMessageCallback implements AsyncMessageCallback {
+
+		MyAsyncMessageCallback() {
+			synchronized(_senderThread) {
+				blockSendsPending++;
+			}
+		}
+		
+		private boolean completed = false;
+		
+		public void sent() {
+			if(logMINOR) Logger.minor(this, "Sent block on "+BlockTransmitter.this);
+			// Wait for acknowledged
+		}
+
+		public void acknowledged() {
+			complete();
+			
+		}
+
+		public void disconnected() {
+			// FIXME kill transfer
+			complete();
+		}
+
+		public void fatalError() {
+			// FIXME kill transfer
+			complete();
+		}
+		
+		private void complete() {
+			if(logMINOR) Logger.minor(this, "Completed send on a block for "+BlockTransmitter.this);
+			synchronized(_senderThread) {
+				if(completed) return;
+				completed = true;
+				blockSendsPending--;
+				if(logMINOR) Logger.minor(this, "Pending: "+blockSendsPending);
+				_senderThread.notifyAll();
+			}
+		}
+
+	};
+	
+	private int blockSendsPending = 0;
+	
+	/**
+	 * @return True if we blocked.
+	 */
+	private boolean waitForAsyncBlockSends() {
+		synchronized(_senderThread) {
+			long now = System.currentTimeMillis();
+			long deadline = now + 60*60*1000;
+			if(blockSendsPending == 0) return false;
+			while(true) {
+				if(logMINOR) Logger.minor(this, "Waiting for "+blockSendsPending+" blocks");
+				try {
+					_senderThread.wait(60*60*1000);
+				} catch (InterruptedException e) {
+					// Ignore
+				}
+				if(blockSendsPending == 0) return true;
+				now = System.currentTimeMillis();
+				if(now > deadline)
+					throw new IllegalStateException("Waited an hour for "+blockSendsPending+" blocks");
+				// FIXME do a clean abort, cancel the blocks as they must still be queued.
+			}
 		}
 	}
 
