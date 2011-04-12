@@ -21,10 +21,12 @@ import java.util.Locale;
 import java.util.Random;
 import java.util.TimeZone;
 
+import freenet.clients.http.FProxyFetchInProgress.REFILTER_POLICY;
 import freenet.clients.http.annotation.AllowData;
 import freenet.l10n.NodeL10n;
 import freenet.support.HTMLEncoder;
 import freenet.support.HTMLNode;
+import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
 import freenet.support.MultiValueTable;
 import freenet.support.TimeUtil;
@@ -70,6 +72,18 @@ public class ToadletContextImpl implements ToadletContext {
 	private final String uniqueId;
 	
 	private URI uri;
+
+        private static volatile boolean logMINOR;
+        private static volatile boolean logDEBUG;
+	static {
+		Logger.registerLogThresholdCallback(new LogThresholdCallback(){
+			@Override
+			public void shouldUpdate(){
+				logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
+                                logDEBUG = Logger.shouldLog(LogLevel.DEBUG, this);
+			}
+		});
+	}
 	
 	/** Is the context closed? If so, don't allow any more writes. This is because there
 	 * may be later requests.
@@ -85,7 +99,7 @@ public class ToadletContextImpl implements ToadletContext {
 		this.uri=uri;
 		sockOutputStream = sock.getOutputStream();
 		remoteAddr = sock.getInetAddress();
-		if(Logger.shouldLog(LogLevel.DEBUG, this))
+		if(logDEBUG)
 			Logger.debug(this, "Connection from "+remoteAddr);
 		this.bf = bf;
 		this.pagemaker = pageMaker;
@@ -170,8 +184,6 @@ public class ToadletContextImpl implements ToadletContext {
 			}
 			mvt.put("cache-control:", "no-cache=\"set-cookie\"");
 			
-			final boolean logMINOR = Logger.shouldLog(LogLevel.MINOR, ToadletContextImpl.class);
-
 			// We do NOT use "set-cookie2" even though we should according though RFC2965 - Firefox 3.0.14 ignores it for me!
 			
 			for(Cookie cookie : replyCookies) {
@@ -363,8 +375,6 @@ public class ToadletContextImpl implements ToadletContext {
 				} else if (firstLine.equals("")) {
 					continue;
 				}
-				
-				boolean logMINOR = Logger.shouldLog(LogLevel.MINOR, ToadletContextImpl.class);
 				
 				if(logMINOR)
 					Logger.minor(ToadletContextImpl.class, "first line: "+firstLine);
@@ -633,6 +643,7 @@ public class ToadletContextImpl implements ToadletContext {
 	public void writeData(Bucket data) throws ToadletContextClosedException, IOException {
 		if(closed) throw new ToadletContextClosedException();
 		BucketTools.copyTo(data, sockOutputStream, Long.MAX_VALUE);
+		data.free();
 	}
 	
 	public BucketFactory getBucketFactory() {
@@ -669,5 +680,9 @@ public class ToadletContextImpl implements ToadletContext {
 	
 	public URI getUri() {
 		return uri;
+	}
+
+	public REFILTER_POLICY getReFilterPolicy() {
+		return container.getReFilterPolicy();
 	}
 }

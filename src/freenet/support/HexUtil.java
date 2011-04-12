@@ -147,6 +147,10 @@ public class HexUtil {
 		return bytesToHex(bitsToBytes(ba, size));
 	}
 
+	public final static String toHexString(BigInteger i) {
+		return bytesToHex(i.toByteArray());
+	}
+
 
 	/**
 	 * @return the number of bytes required to represent the
@@ -222,7 +226,7 @@ public class HexUtil {
 
     /**
      * Turn a BigInteger into a hex string.
-     * BigInteger.toString(16) NPEs on Sun JDK 1.4.2_05. :<
+     * BigInteger.toString(16) NPEs on Sun/Oracle JDK 1.4.2_05. :<
      * The bugs in their Big* are getting seriously irritating...
      */
     public static String biToHex(BigInteger bi) {

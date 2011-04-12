@@ -7,6 +7,7 @@ import java.util.Enumeration;
 import com.sleepycat.je.DatabaseException;
 
 import freenet.keys.KeyVerifyException;
+import freenet.node.stats.StoreAccessStats;
 import freenet.support.ByteArrayWrapper;
 import freenet.support.LRUHashtable;
 import freenet.support.Logger;
@@ -43,11 +44,15 @@ public class RAMFreenetStore<T extends StorableBlock> implements FreenetStore<T>
 	}
 	
 	public synchronized T fetch(byte[] routingKey, byte[] fullKey,
-			boolean dontPromote, boolean canReadClientCache, boolean canReadSlashdotCache, BlockMetadata meta) throws IOException {
+			boolean dontPromote, boolean canReadClientCache, boolean canReadSlashdotCache, boolean ignoreOldBlocks, BlockMetadata meta) throws IOException {
 		ByteArrayWrapper key = new ByteArrayWrapper(routingKey);
 		Block block = blocksByRoutingKey.get(key);
 		if(block == null) {
 			misses++;
+			return null;
+		}
+		if(ignoreOldBlocks && block.oldBlock) {
+			Logger.normal(this, "Ignoring old block");
 			return null;
 		}
 		try {
@@ -56,7 +61,8 @@ public class RAMFreenetStore<T extends StorableBlock> implements FreenetStore<T>
 			hits++;
 			if(!dontPromote)
 				blocksByRoutingKey.push(key, block);
-			if(meta != null && block.oldBlock) meta.oldBlock = true;
+			if(meta != null && block.oldBlock)
+				meta.setOldBlock();
 			return ret;
 		} catch (KeyVerifyException e) {
 			blocksByRoutingKey.removeKey(key);
@@ -94,7 +100,11 @@ public class RAMFreenetStore<T extends StorableBlock> implements FreenetStore<T>
 				boolean equals = Arrays.equals(oldBlock.data, data) &&
 					Arrays.equals(oldBlock.header, header) &&
 					(storeFullKeys ? Arrays.equals(oldBlock.fullKey, fullKey) : true);
-				if(equals) return;
+				if(equals) {
+					if(!isOldBlock)
+						oldBlock.oldBlock = false;
+					return;
+				}
 				if(overwrite) {
 					oldBlock.data = data;
 					oldBlock.header = header;
@@ -106,6 +116,8 @@ public class RAMFreenetStore<T extends StorableBlock> implements FreenetStore<T>
 				}
 				return;
 			} else {
+				if(!isOldBlock)
+					oldBlock.oldBlock = false;
 				return;
 			}
 		}
@@ -168,4 +180,35 @@ public class RAMFreenetStore<T extends StorableBlock> implements FreenetStore<T>
 			}
 		}
 	}
+	
+	public StoreAccessStats getSessionAccessStats() {
+		return new StoreAccessStats() {
+
+			@Override
+			public long hits() {
+				return hits;
+			}
+
+			@Override
+			public long misses() {
+				return misses;
+			}
+
+			@Override
+			public long falsePos() {
+				return 0;
+			}
+
+			@Override
+			public long writes() {
+				return writes;
+			}
+			
+		};
+	}
+
+	public StoreAccessStats getTotalAccessStats() {
+		return null;
+	}
+
 }

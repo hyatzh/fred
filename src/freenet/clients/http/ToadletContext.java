@@ -5,6 +5,7 @@ import java.net.URI;
 import java.text.ParseException;
 import java.util.Date;
 
+import freenet.clients.http.FProxyFetchInProgress.REFILTER_POLICY;
 import freenet.support.HTMLNode;
 import freenet.support.MultiValueTable;
 import freenet.support.api.Bucket;
@@ -54,7 +55,7 @@ public interface ToadletContext {
 	void writeData(byte[] data) throws ToadletContextClosedException, IOException;
 
 	/**
-	 * Write data from a bucket. You must send reply headers first.
+	 * Write data from a bucket. You must send reply headers first. We will free the bucket.
 	 */
 	void writeData(Bucket data) throws ToadletContextClosedException, IOException;
 	
@@ -107,5 +108,9 @@ public interface ToadletContext {
 	public String getUniqueId();
 	
 	public URI getUri();
+	
+	/** What to do when we find cached data on the global queue but it's already been 
+	 * filtered, and we want a filtered copy. */
+	REFILTER_POLICY getReFilterPolicy();
 }
 

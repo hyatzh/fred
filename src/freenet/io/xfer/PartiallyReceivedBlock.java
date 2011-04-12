@@ -18,9 +18,13 @@
  */
 package freenet.io.xfer;
 
+import java.util.ArrayList;
 import java.util.LinkedList;
 
 import freenet.support.Buffer;
+import freenet.support.LogThresholdCallback;
+import freenet.support.Logger;
+import freenet.support.Logger.LogLevel;
 
 /**
  * @author ian
@@ -30,14 +34,28 @@ import freenet.support.Buffer;
  */
 public class PartiallyReceivedBlock {
 
+	private static volatile boolean logMINOR;
+	private static volatile boolean logDEBUG;
+
+	static {
+		Logger.registerLogThresholdCallback(new LogThresholdCallback(){
+			@Override
+			public void shouldUpdate(){
+				logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
+				logDEBUG = Logger.shouldLog(LogLevel.DEBUG, this);
+			}
+		});
+	}
+	
 	byte[] _data;
 	boolean[] _received;
 	int _receivedCount;
-	int _packets, _packetSize;
+	public final int _packets, _packetSize;
 	boolean _aborted;
+	boolean _abortedLocally;
 	int _abortReason;
 	String _abortDescription;
-	LinkedList<PacketReceivedListener> _packetReceivedListeners = new LinkedList<PacketReceivedListener>();
+	ArrayList<PacketReceivedListener> _packetReceivedListeners = new ArrayList<PacketReceivedListener>();
 
 	public PartiallyReceivedBlock(int packets, int packetSize, byte[] data) {
 		if (data.length != packets * packetSize) {
@@ -123,22 +141,25 @@ public class PartiallyReceivedBlock {
 			prl.packetReceived(position);
 		}
 	}
+	
+	public synchronized boolean allReceivedAndNotAborted() {
+		return _receivedCount == _packets && !_aborted;
+	}
 
 	public synchronized boolean allReceived() throws AbortedException {
-		if (_aborted) {
-			throw new AbortedException("PRB is aborted");
+		if(_receivedCount == _packets) {
+			if(logDEBUG) Logger.debug(this, "Received "+_receivedCount+" of "+_packets+" on "+this);
+			return true;
 		}
-		return _receivedCount == _packets;
+		if (_aborted) {
+			throw new AbortedException("PRB is aborted: "+_abortReason+" : "+_abortDescription+" received "+_receivedCount+" of "+_packets+" on "+this);
+		}
+		return false;
 	}
 	
 	public synchronized byte[] getBlock() throws AbortedException {
-		if (_aborted) {
-			throw new AbortedException("PRB is aborted");
-		}
-		if (!allReceived()) {
-			throw new RuntimeException("Tried to get block before all packets received");
-		}
-		return _data;
+		if(allReceived()) return _data;
+		throw new RuntimeException("Tried to get block before all packets received");
 	}
 	
 	public synchronized Buffer getPacket(int x) throws AbortedException {
@@ -150,18 +171,39 @@ public class PartiallyReceivedBlock {
 		}
 		return new Buffer(_data, x * _packetSize, _packetSize);
 	}
+	
 
 	public synchronized void removeListener(PacketReceivedListener listener) {
 		_packetReceivedListeners.remove(listener);
 	}
 
-	public synchronized void abort(int reason, String description) {
-		if(_aborted) return;
-		if(_receivedCount == _packets) return;
-		_aborted = true;
-		_abortReason = reason;
-		_abortDescription = description;
-		for (PacketReceivedListener prl : _packetReceivedListeners) {
+	/**
+	 * Abort the transfer.
+	 * @param reason
+	 * @param description
+	 * @param cancelledLocally If true, the transfer was deliberately aborted by *this node*,
+	 * not as the result of a timeout.
+	 */
+	public void abort(int reason, String description, boolean cancelledLocally) {
+		PacketReceivedListener[] listeners;
+		synchronized(this) {
+			if(_aborted) {
+				if(logMINOR) Logger.minor(this, "Already aborted "+this+" : reason="+_abortReason+" description="+_abortDescription);
+				return;
+			}
+			if(_receivedCount == _packets) {
+				if(logMINOR) Logger.minor(this, "Already received");
+				return;
+			}
+			Logger.normal(this, "Aborting PRB: "+reason+" : "+description+" on "+this, new Exception("debug"));
+			_aborted = true;
+			_abortedLocally = cancelledLocally;
+			_abortReason = reason;
+			_abortDescription = description;
+			listeners = _packetReceivedListeners.toArray(new PacketReceivedListener[_packetReceivedListeners.size()]);
+			_packetReceivedListeners.clear();
+		}
+		for (PacketReceivedListener prl : listeners) {
 			prl.receiveAborted(reason, description);
 		}
 	}
@@ -183,5 +225,9 @@ public class PartiallyReceivedBlock {
 		public void packetReceived(int packetNo);
 		
 		public void receiveAborted(int reason, String description);
+	}
+
+	public boolean abortedLocally() {
+		return _abortedLocally;
 	}
 }

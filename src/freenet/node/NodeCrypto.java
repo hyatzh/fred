@@ -29,8 +29,9 @@ import freenet.crypt.RandomSource;
 import freenet.crypt.SHA256;
 import freenet.crypt.UnsupportedCipherException;
 import freenet.crypt.ciphers.Rijndael;
-import freenet.io.AddressTracker;
+import freenet.io.AddressTracker.Status;
 import freenet.io.comm.FreenetInetAddress;
+import freenet.io.comm.IncomingPacketFilterImpl;
 import freenet.io.comm.Peer;
 import freenet.io.comm.UdpSocketHandler;
 import freenet.keys.FreenetURI;
@@ -38,6 +39,7 @@ import freenet.keys.InsertableClientSSK;
 import freenet.support.Base64;
 import freenet.support.Fields;
 import freenet.support.IllegalBase64Exception;
+import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
 import freenet.support.SimpleFieldSet;
 import freenet.support.Logger.LogLevel;
@@ -55,7 +57,7 @@ public class NodeCrypto {
 	final boolean isOpennet;
 	final RandomSource random;
 	/** The object which handles our specific UDP port, pulls messages from it, feeds them to the packet mangler for decryption etc */
-	UdpSocketHandler socket;
+	final UdpSocketHandler socket;
 	public FNPPacketMangler packetMangler;
 	// FIXME: abstract out address stuff? Possibly to something like NodeReference?
 	final int portNumber;
@@ -76,7 +78,6 @@ public class NodeCrypto {
 	InsertableClientSSK myARK;
 	/** My ARK sequence number */
 	long myARKNumber;
-	static boolean logMINOR;
 	final NodeCryptoConfig config;
 	final NodeIPPortDetector detector;
 	final BlockCipher anonSetupCipher;
@@ -89,6 +90,15 @@ public class NodeCrypto {
 	/** A synchronization object used while signing the reference fieldset */
 	private volatile Object referenceSync = new Object();
 
+        private static volatile boolean logMINOR;
+	static {
+		Logger.registerLogThresholdCallback(new LogThresholdCallback(){
+			@Override
+			public void shouldUpdate(){
+				logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
+			}
+		});
+	}
 	/**
 	 * Get port number from a config, create socket and packet mangler
 	 * @throws NodeInitException
@@ -99,7 +109,6 @@ public class NodeCrypto {
 		this.config = config;
 		random = node.random;
 		this.isOpennet = isOpennet;
-		logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 
 		config.starting(this);
 
@@ -149,7 +158,7 @@ public class NodeCrypto {
 
 		socket.setDropProbability(config.getDropProbability());
 
-		socket.setLowLevelFilter(packetMangler = new FNPPacketMangler(node, this, socket));
+		packetMangler = new FNPPacketMangler(node, this, socket);
 
 		detector = new NodeIPPortDetector(node, node.ipDetector, this, enableARKs);
 
@@ -274,6 +283,8 @@ public class NodeCrypto {
 	}
 
 	public void start() {
+		socket.calculateMaxPacketSize();
+		socket.setLowLevelFilter(new IncomingPacketFilterImpl(packetMangler, node, this));
 		packetMangler.start();
 		socket.start();
 	}
@@ -316,9 +327,9 @@ public class NodeCrypto {
 		fs.putSingle("version", Version.getVersionString()); // Keep, vital that peer know our version. For example, some types may be sent in different formats to different node versions (e.g. Peer).
 		if(!forAnonInitiator)
 			fs.putSingle("lastGoodVersion", Version.getLastGoodVersionString()); // Also vital
-		if(node.testnetEnabled) {
+		if(node.isTestnetEnabled()) {
 			fs.put("testnet", true);
-			fs.put("testnetPort", node.testnetHandler.getPort()); // Useful, saves a lot of complexity
+			//fs.put("testnetPort", node.testnetHandler.getPort()); // Useful, saves a lot of complexity
 		}
 		if((!isOpennet) && (!forSetup) && (!forARK))
 			fs.putSingle("myName", node.getMyName());
@@ -345,7 +356,7 @@ public class NodeCrypto {
 
 	SimpleFieldSet exportPublicCryptoFieldSet(boolean forSetup, boolean forAnonInitiator) {
 		SimpleFieldSet fs = new SimpleFieldSet(true);
-		int[] negTypes = packetMangler.supportedNegTypes();
+		int[] negTypes = packetMangler.supportedNegTypes(true);
 		if(!(forSetup || forAnonInitiator))
 			// Can't change on setup.
 			// Anonymous initiator doesn't need identity as we don't use it.
@@ -483,7 +494,7 @@ public class NodeCrypto {
 	public PeerNode[] getPeerNodes() {
 		if(node.peers == null) return null;
 		if(isOpennet)
-			return node.peers.getOpennetPeers();
+			return node.peers.getOpennetAndSeedServerPeers();
 		else
 			return node.peers.getDarknetPeers();
 	}
@@ -538,10 +549,10 @@ public class NodeCrypto {
 	}
 
 	public boolean definitelyPortForwarded() {
-		return socket.getDetectedConnectivityStatus() == AddressTracker.DEFINITELY_PORT_FORWARDED;
+		return socket.getDetectedConnectivityStatus() == Status.DEFINITELY_PORT_FORWARDED;
 	}
 
-	public int getDetectedConnectivityStatus() {
+	public Status getDetectedConnectivityStatus() {
 		return socket.getDetectedConnectivityStatus();
 	}
 
@@ -578,11 +589,19 @@ public class NodeCrypto {
 				tuple.portNumber = portNumber;
 				setupContainer.store(tuple);
 				setupContainer.commit();
-				if(Logger.shouldLog(LogLevel.MINOR, this)) Logger.minor(this, "COMMITTED");
+				if(logMINOR) Logger.minor(this, "COMMITTED");
 				System.err.println("Generated and stored database handle for node on port "+portNumber+": "+handle);
 				return handle;
 			}
 		}
+	}
+
+	public boolean wantAnonAuth() {
+		return node.wantAnonAuth(isOpennet);
+	}
+	
+	public boolean wantAnonAuthChangeIP() {
+		return node.wantAnonAuthChangeIP(isOpennet);
 	}
 }
 

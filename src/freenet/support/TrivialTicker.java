@@ -5,7 +5,6 @@ import java.util.Timer;
 import java.util.TimerTask;
 
 import freenet.node.FastRunnable;
-import freenet.node.Ticker;
 
 /**
  * Ticker implemented using Timer's.
@@ -34,16 +33,14 @@ public class TrivialTicker implements Ticker {
 		TimerTask t = new TimerTask() {
 			@Override
 			public void run() {
-				try {
-					if(job instanceof FastRunnable) {
-						job.run();
-					} else {
-						executor.execute(job, "Delayed task: "+job);
-					}
-				} finally {
-					synchronized(this) {
-						jobs.remove(job);
-					}
+				synchronized(TrivialTicker.this) {
+					jobs.remove(job); // We must do this before job.run() in case the job re-schedules itself.
+				}
+				
+				if(job instanceof FastRunnable) {
+					job.run();
+				} else {
+					executor.execute(job, "Delayed task: "+job);
 				}
 			}
 		};
@@ -63,18 +60,15 @@ public class TrivialTicker implements Ticker {
 
 			@Override
 			public void run() {
-				try {
-					if(job instanceof FastRunnable) {
-						job.run();
-					} else {
-						executor.execute(job, name);
-					}
-				} finally {
-					synchronized(this) {
-						jobs.remove(job);
-					}
+				synchronized(TrivialTicker.this) {
+					jobs.remove(job); // We must do this before job.run() in case the job re-schedules itself.
 				}
 				
+				if(job instanceof FastRunnable) {
+					job.run();
+				} else {
+					executor.execute(job, name);
+				}
 			}
 			
 		};
@@ -92,6 +86,10 @@ public class TrivialTicker implements Ticker {
 	}
 	
 	public void cancelTimedJob(final Runnable job) {
+		removeQueuedJob(job);
+	}
+	
+	public void removeQueuedJob(final Runnable job) {
 		synchronized(this) {
 			if(!running)
 				return;
@@ -110,7 +108,7 @@ public class TrivialTicker implements Ticker {
 	 */
 	public void rescheduleTimedJob(final Runnable job, final String name, long newOffset) {
 		synchronized(this) {
-			cancelTimedJob(job);
+			removeQueuedJob(job);
 			queueTimedJob(job, name, newOffset, false, false); // Don't dupe-check, we are synchronized
 		}
 	}
@@ -148,6 +146,10 @@ public class TrivialTicker implements Ticker {
 				}
 			}
 		}
+	}
+
+	public Executor getExecutor() {
+		return executor;
 	}
 
 }

@@ -166,7 +166,10 @@ public class ClientGetter extends BaseClientGetter {
 			// FIXME synchronization is probably unnecessary.
 			// But we DEFINITELY do not want to synchronize while calling currentState.schedule(),
 			// which can call onSuccess and thereby almost anything.
+			HashResult[] oldHashes = null;
 			synchronized(this) {
+				if(restart)
+					clearCountersOnRestart();
 				if(overrideURI != null) uri = overrideURI;
 				if(finished) {
 					if(!restart) return false;
@@ -174,9 +177,21 @@ public class ClientGetter extends BaseClientGetter {
 					cancelled = false;
 					finished = false;
 				}
+				expectedMIME = null;
+				expectedSize = 0;
+				oldHashes = hashes;
+				hashes = null;
+				finalBlocksRequired = 0;
+				finalBlocksTotal = 0;
+				resetBlocks();
 				currentState = SingleFileFetcher.create(this, this,
 						uri, ctx, actx, ctx.maxNonSplitfileRetries, 0, false, -1, true,
-						true, container, context);
+						true, container, context, realTimeFlag);
+			}
+			if(persistent() && oldHashes != null) {
+				for(HashResult res : oldHashes) {
+					if(res != null) res.removeFrom(container);
+				}
 			}
 			if(cancelled) cancel();
 			// schedule() may deactivate stuff, so store it now.
@@ -206,6 +221,15 @@ public class ClientGetter extends BaseClientGetter {
 			container.deactivate(currentState, 1);
 		}
 		return true;
+	}
+
+	protected void clearCountersOnRestart() {
+		this.archiveRestarts = 0;
+		this.expectedMIME = null;
+		this.expectedSize = 0;
+		this.finalBlocksRequired = 0;
+		this.finalBlocksTotal = 0;
+		super.clearCountersOnRestart();
 	}
 
 	/**
@@ -609,6 +633,7 @@ public class ClientGetter extends BaseClientGetter {
 	 * @throws FetchException If something went wrong.
 	 */
 	public boolean restart(FreenetURI redirect, boolean filterData, ObjectContainer container, ClientContext context) throws FetchException {
+		checkForBrokenClient(container, context);
 		if(persistent()) {
 			container.activate(ctx, 1);
 			container.activate(ctx.filterData, 1);
@@ -628,7 +653,7 @@ public class ClientGetter extends BaseClientGetter {
 	/**
 	 * Add a block to the binary blob.
 	 */
-	void addKeyToBinaryBlob(ClientKeyBlock block, ObjectContainer container, ClientContext context) {
+	protected void addKeyToBinaryBlob(ClientKeyBlock block, ObjectContainer container, ClientContext context) {
 		if(binaryBlobKeysAddedAlready == null) return;
 		if(persistent()) {
 			container.activate(binaryBlobStream, 1);
@@ -691,7 +716,7 @@ public class ClientGetter extends BaseClientGetter {
 	}
 
 	/** Are we collecting a binary blob? */
-	boolean collectingBinaryBlob() {
+	protected boolean collectingBinaryBlob() {
 		return binaryBlobBucket != null;
 	}
 
@@ -839,4 +864,5 @@ public class ClientGetter extends BaseClientGetter {
 		if(persistent()) container.store(this);
 		ctx.eventProducer.produceEvent(new ExpectedHashesEvent(hashes), container, context);
 	}
+	
 }

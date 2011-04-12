@@ -89,7 +89,7 @@ public class SeedClientPeerNode extends PeerNode {
 
 	@Override
 	public boolean disconnected(boolean dumpMessageQueue, boolean dumpTrackers) {
-		boolean ret = super.disconnected(dumpMessageQueue, dumpTrackers);
+		boolean ret = super.disconnected(true, true);
 		node.peers.disconnect(this, false, false, false);
 		return ret;
 	}
@@ -144,5 +144,23 @@ public class SeedClientPeerNode extends PeerNode {
 	protected void maybeClearPeerAddedTimeOnRestart(long now) {
 		// Do nothing.
 	}
+
+	@Override
+	public void fatalTimeout() {
+		// Disconnect.
+		forceDisconnect(true);
+	}
+	
+	public boolean shallWeRouteAccordingToOurPeersLocation() {
+		return false; // Irrelevant
+	}
+	
+	protected void onConnect() {
+		OpennetManager om = node.getOpennet();
+		if(om != null)
+			om.seedTracker.onConnectSeed(this);
+		super.onConnect();
+	}
+
 
 }

@@ -61,6 +61,8 @@ public class RandomGrabArray implements RemoveRandom, HasCooldownCacheItem {
 			if(context != null) {
 				context.cooldownTracker.clearCachedWakeup(req, persistent, container);
 				context.cooldownTracker.clearCachedWakeup(this, persistent, container);
+				if(parent != null)
+					context.cooldownTracker.clearCachedWakeup(parent, persistent, container);
 			}
 			int x = 0;
 			if(blocks.length == 1 && index < BLOCK_SIZE) {
@@ -592,7 +594,7 @@ public class RandomGrabArray implements RemoveRandom, HasCooldownCacheItem {
 			boolean active = true;
 			if(persistent) active = container.ext().isActive(parent);
 			if(!active) container.activate(parent, 1);
-			parent.maybeRemove(this, container);
+			parent.maybeRemove(this, container, context);
 			if(!active) container.deactivate(parent, 1);
 		}
 	}

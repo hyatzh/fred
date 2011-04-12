@@ -10,11 +10,12 @@ import java.util.List;
 import com.sleepycat.je.DatabaseException;
 
 import freenet.keys.KeyVerifyException;
-import freenet.node.Ticker;
+import freenet.node.stats.StoreAccessStats;
 import freenet.support.ByteArrayWrapper;
 import freenet.support.LRUHashtable;
 import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
+import freenet.support.Ticker;
 import freenet.support.Logger.LogLevel;
 import freenet.support.api.Bucket;
 import freenet.support.io.TempBucketFactory;
@@ -91,7 +92,7 @@ public class SlashdotStore<T extends StorableBlock> implements FreenetStore<T> {
 	/**
 	 * @param meta IGNORED!
 	 */
-	public T fetch(byte[] routingKey, byte[] fullKey, boolean dontPromote, boolean canReadClientCache, boolean canReadSlashdotCache, BlockMetadata meta) throws IOException {
+	public T fetch(byte[] routingKey, byte[] fullKey, boolean dontPromote, boolean canReadClientCache, boolean canReadSlashdotCache, boolean ignoreOldBlocks, BlockMetadata meta) throws IOException {
 		ByteArrayWrapper key = new ByteArrayWrapper(routingKey);
 		DiskBlock block;
 		long timeAccessed;
@@ -123,7 +124,6 @@ public class SlashdotStore<T extends StorableBlock> implements FreenetStore<T> {
 				}
 			}
 			if(logDEBUG) Logger.debug(this, "Block was last accessed "+(System.currentTimeMillis() - timeAccessed)+"ms ago");
-			if(meta != null) meta.noMetadata = true;
 			return ret;
 		} catch (KeyVerifyException e) {
 			block.data.free();
@@ -248,4 +248,35 @@ public class SlashdotStore<T extends StorableBlock> implements FreenetStore<T> {
 	public synchronized void setLifetime(Long val) {
 		maxLifetime = val;
 	}
+	
+	public StoreAccessStats getSessionAccessStats() {
+		return new StoreAccessStats() {
+
+			@Override
+			public long hits() {
+				return hits;
+			}
+
+			@Override
+			public long misses() {
+				return misses;
+			}
+
+			@Override
+			public long falsePos() {
+				return 0;
+			}
+
+			@Override
+			public long writes() {
+				return writes;
+			}
+			
+		};
+	}
+
+	public StoreAccessStats getTotalAccessStats() {
+		return null;
+	}
+
 }

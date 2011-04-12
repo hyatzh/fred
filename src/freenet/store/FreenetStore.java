@@ -4,6 +4,8 @@ import java.io.IOException;
 
 import com.sleepycat.je.DatabaseException;
 
+import freenet.node.stats.StoreAccessStats;
+
 /**
  * Datastore interface
  */
@@ -25,7 +27,7 @@ public interface FreenetStore<T extends StorableBlock> {
 	 * pubkey for an SSK.
 	 * @throws IOException If a disk I/O error occurs.
 	 */
-	T fetch(byte[] routingKey, byte[] fullKey, boolean dontPromote, boolean canReadClientCache, boolean canReadSlashdotCache, BlockMetadata meta) throws IOException;
+	T fetch(byte[] routingKey, byte[] fullKey, boolean dontPromote, boolean canReadClientCache, boolean canReadSlashdotCache, boolean ignoreOldBlocks, BlockMetadata meta) throws IOException;
 	
 	/**
 	 * Store a block.
@@ -72,4 +74,8 @@ public interface FreenetStore<T extends StorableBlock> {
 	 * @return <code>false</code> <b>only</b> if the key does not exist in store.
 	 */
 	public boolean probablyInStore(byte[] routingKey);
+
+	public abstract StoreAccessStats getSessionAccessStats();
+
+	public abstract StoreAccessStats getTotalAccessStats();
 }

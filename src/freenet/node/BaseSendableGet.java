@@ -14,8 +14,8 @@ public abstract class BaseSendableGet extends SendableRequest {
 	protected BaseSendableGet() {
 	}
 
-	protected BaseSendableGet(boolean persistent) {
-		super(persistent);
+        protected BaseSendableGet(boolean persistent, boolean realTimeFlag) {
+		super(persistent, realTimeFlag);
 	}
 
 	/** Get a numbered key to fetch. */

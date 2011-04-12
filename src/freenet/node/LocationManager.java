@@ -15,6 +15,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TimeZone;
 
 import freenet.crypt.RandomSource;
 import freenet.crypt.SHA256;
@@ -138,9 +139,21 @@ public class LocationManager implements ByteCounter {
      * Start a thread to send FNPSwapRequests every second when
      * we are not locked.
      */
-    public void startSender() {
+    public void start() {
     	if(node.enableSwapping)
     		node.getTicker().queueTimedJob(sender, STARTUP_DELAY);
+		node.ticker.queueTimedJob(new Runnable() {
+
+			public void run() {
+				try {
+					clearOldSwapChains();
+					removeTooOldQueuedItems();
+				} finally {
+					node.ticker.queueTimedJob(this, 10*1000);
+				}
+			}
+			
+		}, 10*1000);
     }
 
     /**
@@ -647,7 +660,9 @@ public class LocationManager implements ByteCounter {
 				FileWriter fw = null;
 				try {
 					fw = new FileWriter(locationLog, true);
-					fw.write(""+DateFormat.getDateTimeInstance().format(new Date())+" : "+getLocation()+(randomReset ? " (random reset"+(fromDupLocation?" from duplicated location" : "")+")" : "")+'\n');
+					DateFormat df = DateFormat.getDateTimeInstance();
+					df.setTimeZone(TimeZone.getTimeZone("GMT"));
+					fw.write(""+df.format(new Date())+" : "+getLocation()+(randomReset ? " (random reset"+(fromDupLocation?" from duplicated location" : "")+")" : "")+'\n');
 					fw.close();
 				} catch (IOException e) {
 					Logger.error(this, "Unable to write changed location to "+locationLog+" : "+e, e);
@@ -1357,7 +1372,7 @@ public class LocationManager implements ByteCounter {
 		for(int i=0;i<peers.length;i++) {
 			locs[i] = peers[i].getLocation();
 			if(indicateBackoff) {
-				if(peers[i].isRoutingBackedOff())
+				if(peers[i].isRoutingBackedOffEither())
 					locs[i] += 1;
 				else
 					locs[i] = -1 - locs[i];

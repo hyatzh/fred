@@ -7,8 +7,6 @@ import java.net.MalformedURLException;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.tanukisoftware.wrapper.WrapperManager;
-
 import com.db4o.ObjectContainer;
 
 import freenet.client.FetchContext;
@@ -32,6 +30,7 @@ import freenet.node.Announcer;
 import freenet.node.Node;
 import freenet.node.NodeInitException;
 import freenet.node.NodeStarter;
+import freenet.node.OpennetManager;
 import freenet.node.PeerNode;
 import freenet.node.RequestStarter;
 import freenet.node.Version;
@@ -44,7 +43,6 @@ import freenet.pluginmanager.PluginInfoWrapper;
 import freenet.pluginmanager.PluginManager;
 import freenet.pluginmanager.PluginManager.OfficialPluginDescription;
 import freenet.support.Logger;
-import freenet.support.Logger.LogLevel;
 import freenet.support.api.BooleanCallback;
 import freenet.support.api.StringCallback;
 import freenet.support.io.BucketTools;
@@ -120,11 +118,14 @@ public class NodeUpdateManager {
 
 	public final UpdateOverMandatoryManager uom;
 
-	private boolean logMINOR;
+	private static volatile boolean logMINOR;
 	private boolean disabledThisSession;
 
+        static {
+            Logger.registerClass(NodeUpdateManager.class);
+        }
+        
 	public NodeUpdateManager(Node node, Config config) throws InvalidConfigValueException {
-		logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 		this.node = node;
 		this.hasBeenBlown = false;
 		shouldUpdateExt = NodeStarter.extBuildNumber < NodeStarter.RECOMMENDED_EXT_BUILD_NUMBER;
@@ -257,7 +258,7 @@ public class NodeUpdateManager {
 			context.maxSplitfileBlockRetries = -1;
 			context.maxTempLength = maxSize;
 			context.maxOutputLength = maxSize;
-			ClientGetter get = new ClientGetter(this, freenetURI, context, priority, node.nonPersistentClient, null, null);
+			ClientGetter get = new ClientGetter(this, freenetURI, context, priority, node.nonPersistentClientBulk, null, null);
 			try {
 				node.clientCore.clientContext.start(get);
 			} catch (DatabaseDisabledException e) {
@@ -378,14 +379,21 @@ public class NodeUpdateManager {
 
 	public void maybeSendUOMAnnounce(PeerNode peer) {
 		synchronized(broadcastUOMAnnouncesSync) {
-			if(!broadcastUOMAnnounces) return; // nothing worth announcing yet
+			if(!broadcastUOMAnnounces) {
+				if(logMINOR) Logger.minor(this, "Not sending UOM on connect: Nothing worth announcing yet");
+				return; // nothing worth announcing yet
+			}
 		}
-		boolean hasUpdate;
+		boolean dontHaveUpdate;
 		synchronized(this) {
-			hasUpdate = (mainUpdater == null || mainUpdater.getFetchedVersion() <= 0);
-			if((!hasBeenBlown) && hasUpdate) return;
+			dontHaveUpdate = (mainUpdater == null || mainUpdater.getFetchedVersion() <= 0);
+			if((!hasBeenBlown) && dontHaveUpdate) {
+				if(logMINOR) Logger.minor(this, "Not sending UOM on connect: Don't have the update");
+				return;
+			}
 		}
-		if((!hasUpdate) && hasBeenBlown && !revocationChecker.hasBlown()) {
+		if((!dontHaveUpdate) && hasBeenBlown && !revocationChecker.hasBlown()) {
+			if(logMINOR) Logger.minor(this, "Not sending UOM on connect: Local problem causing blown key");
 			// Local problem, don't broadcast.
 			return;
 		}
@@ -409,7 +417,6 @@ public class NodeUpdateManager {
 	 * @throws InvalidConfigValueException If enable=true and we are not running under the wrapper.
 	 */
 	void enable(boolean enable) throws InvalidConfigValueException {
-		logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 //		if(!node.isUsingWrapper()){
 //			Logger.normal(this, "Don't try to start the updater as we are not running under the wrapper.");
 //			return;
@@ -639,7 +646,7 @@ public class NodeUpdateManager {
 			}
 			int extVer = getReadyExt();
 			if(extVer < minExtVersion || extVer > maxExtVersion) {
-				if(logMINOR) Logger.minor(this, "Invalid ext: current "+extVer+" must be between "+minExtVersion+" and "+maxExtVersion);
+				System.err.println("Invalid ext: current "+extVer+" must be between "+minExtVersion+" and "+maxExtVersion);
 				return false;
 			}
 			if(!ignoreRevocation) {
@@ -662,7 +669,6 @@ public class NodeUpdateManager {
 
 	/** Check whether there is an update to deploy. If there is, do it. */
 	private void deployUpdate() {
-		logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 		try {
 			synchronized(this) {
 				if(disabledThisSession) {
@@ -912,13 +918,11 @@ public class NodeUpdateManager {
 					gotJarTime = System.currentTimeMillis();
 					if(logMINOR)
 						Logger.minor(this, "Got main jar: "+mainUpdater.getFetchedVersion());
+					if(requiredExt > -1)
+						minExtVersion = requiredExt;
+					if(recommendedExt > -1)
+						maxExtVersion = recommendedExt;
 				}
-			}
-			if(!isExt) {
-				if(requiredExt > -1)
-					minExtVersion = requiredExt;
-				if(recommendedExt > -1)
-					maxExtVersion = recommendedExt;
 			}
 		}
 		if(!isExt && (requiredExt > -1 || recommendedExt > -1)) {
@@ -1015,7 +1019,7 @@ public class NodeUpdateManager {
 		deployPluginUpdates();
 		// If we're still here, we didn't update.
 		broadcastUOMAnnounces();
-		node.ps.queueTimedJob(new Runnable() {
+		node.ticker.queueTimedJob(new Runnable() {
 			public void run() {
 				revocationChecker.start(false);
 			}
@@ -1041,11 +1045,22 @@ public class NodeUpdateManager {
 
 	public void arm() {
 		armed = true;
+		OpennetManager om = node.getOpennet();
+		if(om != null) {
+			if(om.waitingForUpdater()) {
+				synchronized(this) {
+					// Reannounce and count it from now.
+					if(gotJarTime > 0)
+						gotJarTime = System.currentTimeMillis();
+				}
+				om.reannounce();
+			}
+		}
 		deployOffThread(0);
 	}
 
 	void deployOffThread(long delay) {
-		node.ps.queueTimedJob(new Runnable() {
+		node.ticker.queueTimedJob(new Runnable() {
 			public void run() {
 				if(logMINOR) Logger.minor(this, "Running deployOffThread");
 				try {
@@ -1327,4 +1342,7 @@ public class NodeUpdateManager {
 		updater.arm(wasRunning);
 	}
 
+        protected boolean isSeednode() {
+            return (node.isOpennetEnabled() && node.wantAnonAuth(true));
+        }
 }

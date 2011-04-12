@@ -6,17 +6,18 @@ package freenet.node;
 import freenet.support.Logger;
 import freenet.support.OOMHandler;
 import freenet.support.SizeUtil;
+import freenet.support.Ticker;
 import freenet.support.Logger.LogLevel;
 import freenet.support.math.RunningAverage;
 import freenet.support.math.SimpleRunningAverage;
 
 public class MemoryChecker implements Runnable {
 	private volatile boolean goon = false;
-	private final PacketSender ps;
+	private final Ticker ps;
 	private int aggressiveGCModificator;
 	private RunningAverage avgFreeMemory;
 	
-	public MemoryChecker(PacketSender ps, int modificator){
+	public MemoryChecker(Ticker ps, int modificator){
 		this.ps = ps;
 		this.aggressiveGCModificator = modificator;
 	}

@@ -12,6 +12,7 @@ import freenet.client.FetchException;
 import freenet.keys.FreenetURI;
 import freenet.node.Node;
 import freenet.support.Fields;
+import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
 import freenet.support.SimpleFieldSet;
 import freenet.support.Logger.LogLevel;
@@ -30,6 +31,16 @@ public class GetFailedMessage extends FCPMessage {
 	final String expectedMimeType;
 	final boolean finalizedExpected;
 	final FreenetURI redirectURI;
+
+	private static volatile boolean logMINOR;
+	static {
+		Logger.registerLogThresholdCallback(new LogThresholdCallback(){
+			@Override
+			public void shouldUpdate(){
+				logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
+			}
+		});
+	}
 
 	/**
 	 * zero arg c'tor for db4o on jamvm
@@ -51,7 +62,7 @@ public class GetFailedMessage extends FCPMessage {
 	}
 
 	public GetFailedMessage(FetchException e, String identifier, boolean global) {
-		if(Logger.shouldLog(LogLevel.MINOR, this))
+		if(logMINOR)
 			Logger.minor(this, "Creating get failed from "+e+" for "+identifier, e);
 		this.tracker = e.errorCodes;
 		this.code = e.mode;
@@ -170,6 +181,17 @@ public class GetFailedMessage extends FCPMessage {
 			tracker.removeFrom(container);
 		}
 		container.delete(this);
+	}
+	
+	public String getShortFailedMessage() {
+		return shortCodeDescription;
+	}
+	
+	public String getLongFailedMessage() {
+		if(extraDescription != null)
+			return shortCodeDescription + ": " + extraDescription;
+		else
+			return shortCodeDescription;
 	}
 
 }

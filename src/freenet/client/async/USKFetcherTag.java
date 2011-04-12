@@ -42,6 +42,7 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 	private final boolean ownFetchContext;
 	private final boolean checkStoreOnly;
 	private final int hashCode;
+	private final boolean realTimeFlag;
 
 	/**
 	 * zero arg c'tor for db4o on jamvm
@@ -56,9 +57,10 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 		ctx = null;
 		checkStoreOnly = false;
 		hashCode = 0;
+		realTimeFlag = false;
 	}
 
-	private USKFetcherTag(USK origUSK, USKFetcherCallback callback, long nodeDBHandle, boolean persistent, ObjectContainer container, FetchContext ctx, boolean keepLastData, long token, boolean hasOwnFetchContext, boolean checkStoreOnly) {
+	private USKFetcherTag(USK origUSK, USKFetcherCallback callback, long nodeDBHandle, boolean persistent, boolean realTime, ObjectContainer container, FetchContext ctx, boolean keepLastData, long token, boolean hasOwnFetchContext, boolean checkStoreOnly) {
 		this.nodeDBHandle = nodeDBHandle;
 		this.callback = callback;
 		this.origUSK = origUSK;
@@ -68,6 +70,7 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 		this.keepLastData = keepLastData;
 		this.token = token;
 		this.ownFetchContext = hasOwnFetchContext;
+		this.realTimeFlag = realTime;
 		pollingPriorityNormal = callback.getPollingPriorityNormal();
 		pollingPriorityProgress = callback.getPollingPriorityProgress();
 		priority = pollingPriorityNormal;
@@ -93,9 +96,9 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 	 * @param token
 	 * @return
 	 */
-	public static USKFetcherTag create(USK usk, USKFetcherCallback callback, long nodeDBHandle, boolean persistent, 
+	public static USKFetcherTag create(USK usk, USKFetcherCallback callback, long nodeDBHandle, boolean persistent, boolean realTime, 
 			ObjectContainer container, FetchContext ctx, boolean keepLast, int token, boolean hasOwnFetchContext, boolean checkStoreOnly) {
-		USKFetcherTag tag = new USKFetcherTag(usk, callback, nodeDBHandle, persistent, container, ctx, keepLast, token, hasOwnFetchContext, checkStoreOnly);
+		USKFetcherTag tag = new USKFetcherTag(usk, callback, nodeDBHandle, persistent, realTime, container, ctx, keepLast, token, hasOwnFetchContext, checkStoreOnly);
 		if(persistent) container.store(tag);
 		return tag;
 	}
@@ -105,19 +108,6 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 		if(persistent) container.store(this); // Update
 	}
 
-	private static final RequestClient client = new RequestClient() {
-
-		public boolean persistent() {
-			// The actual USK fetch is non-persistent, only the tags survive a restart.
-			return false;
-		}
-
-		public void removeFrom(ObjectContainer container) {
-			throw new UnsupportedOperationException();
-		}
-		
-	};
-	
 	public void start(USKManager manager, ClientContext context, ObjectContainer container) {
 		USK usk = origUSK;
 		if(persistent)
@@ -128,7 +118,7 @@ class USKFetcherTag implements ClientGetState, USKFetcherCallback {
 			usk = usk.clone();
 		if(persistent)
 			container.activate(ctx, 1);
-		fetcher = manager.getFetcher(usk, ctx, new USKFetcherWrapper(usk, priority, client), keepLastData, checkStoreOnly);
+		fetcher = manager.getFetcher(usk, ctx, new USKFetcherWrapper(usk, priority, realTimeFlag ? USKManager.rcRT : USKManager.rcBulk), keepLastData, checkStoreOnly);
 		fetcher.addCallback(this);
 		fetcher.schedule(null, context); // non-persistent
 		if(logMINOR) Logger.minor(this, "Starting "+fetcher+" for "+this);

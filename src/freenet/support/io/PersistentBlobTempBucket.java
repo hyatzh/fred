@@ -61,7 +61,7 @@ public class PersistentBlobTempBucket implements Bucket {
 		this.readOnly = shadow;
 	}
 
-	public Bucket createShadow() throws IOException {
+	public Bucket createShadow() {
 		return factory.createShadow(this);
 	}
 

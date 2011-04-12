@@ -33,8 +33,8 @@ import freenet.support.RandomGrabArrayItemExclusionList;
  */
 public class SplitFileFetcherSegmentGet extends SendableGet implements SupportsBulkCallFailure {
 	
-	public SplitFileFetcherSegmentGet(ClientRequester parent, SplitFileFetcherSegment segment) {
-		super(parent);
+	public SplitFileFetcherSegmentGet(ClientRequester parent, SplitFileFetcherSegment segment, boolean realTimeFlag) {
+		super(parent, realTimeFlag);
 		this.segment = segment;
 	}
 
@@ -136,7 +136,7 @@ public class SplitFileFetcherSegmentGet extends SendableGet implements SupportsB
 		}
 		boolean forceFatal = false;
 		if(parent.isCancelled()) {
-			if(Logger.shouldLog(LogLevel.MINOR, this)) 
+			if(logMINOR)
 				Logger.minor(this, "Failing: cancelled");
 			e = new FetchException(FetchException.CANCELLED);
 			forceFatal = true;
@@ -198,7 +198,7 @@ public class SplitFileFetcherSegmentGet extends SendableGet implements SupportsB
 		}
 		if(isCancelled(container)) return;
 		try {
-			getScheduler(context).register(null, new SendableGet[] { this }, persistent, container, getContextBlocks(container), true);
+			getScheduler(container, context).register(null, new SendableGet[] { this }, persistent, container, getContextBlocks(container), true);
 		} catch (KeyListenerConstructionException e) {
 			Logger.error(this, "Impossible: "+e+" on "+this, e);
 		}
@@ -319,7 +319,7 @@ public class SplitFileFetcherSegmentGet extends SendableGet implements SupportsB
         	container.activate(segment.errors, 1);
         }
         if(parent.isCancelled()) {
-                if(Logger.shouldLog(LogLevel.MINOR, this))
+                if(logMINOR)
                         Logger.minor(this, "Failing: cancelled");
                 // Fail the segment.
                 segment.fail(new FetchException(FetchException.CANCELLED), container, context, false);

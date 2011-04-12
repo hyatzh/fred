@@ -40,6 +40,7 @@ import freenet.crypt.RandomSource;
 import freenet.keys.KeyVerifyException;
 import freenet.keys.SSKBlock;
 import freenet.node.SemiOrderedShutdownHook;
+import freenet.node.stats.StoreAccessStats;
 import freenet.support.Fields;
 import freenet.support.HexUtil;
 import freenet.support.Logger;
@@ -1165,9 +1166,8 @@ public class BerkeleyDBFreenetStore<T extends StorableBlock> implements FreenetS
 	 * {@inheritDoc}
 	 */
 	public T fetch(byte[] routingkey, byte[] fullKey, boolean dontPromote,
-			boolean canReadClientCache, boolean canReadSlashdotCache, BlockMetadata meta) throws IOException {
+			boolean canReadClientCache, boolean canReadSlashdotCache, boolean ignoreOldBlocks, BlockMetadata meta) throws IOException {
 		T retval = fetch(routingkey, fullKey, dontPromote, canReadClientCache, canReadSlashdotCache, (DSAPublicKey)null);
-		if(meta != null) meta.noMetadata = true;
 		return retval;
 	}
 	
@@ -2344,4 +2344,35 @@ public class BerkeleyDBFreenetStore<T extends StorableBlock> implements FreenetS
 		} 
 		 */
 	}
+    
+	public StoreAccessStats getSessionAccessStats() {
+		return new StoreAccessStats() {
+
+			@Override
+			public long hits() {
+				return hits;
+			}
+
+			@Override
+			public long misses() {
+				return misses;
+			}
+
+			@Override
+			public long falsePos() {
+				return 0;
+			}
+
+			@Override
+			public long writes() {
+				return writes;
+			}
+			
+		};
+	}
+
+	public StoreAccessStats getTotalAccessStats() {
+		return null;
+	}
+
 }

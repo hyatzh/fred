@@ -3,6 +3,7 @@
  * http://www.gnu.org/ for further details of the GPL. */
 package freenet.support.api;
 
+import java.util.Collection;
 import java.util.NoSuchElementException;
 
 import javax.naming.SizeLimitExceededException;
@@ -144,6 +145,7 @@ public interface HTTPRequest {
 	
 	/**
 	 * Gets up to maxLength characters from the part, ignores any characters after the limit.
+	 * If no such part exists, an empty String is returned.
 	 */
 	public String getPartAsStringFailsafe(String name, int maxlength);
 
@@ -158,6 +160,7 @@ public interface HTTPRequest {
 	
 	/**
 	 * Gets up to maxLength bytes from the part, ignores any bytes after the limit.
+	 * If no such part exists, a byte[] with size 0 is returned. 
 	 */
 	public byte[] getPartAsBytesFailsafe(String name, int maxlength);
 	
@@ -180,5 +183,14 @@ public interface HTTPRequest {
 
 	/** Get the length of the original uploaded raw data for a POST. */
 	public int getContentLength();
+
+	public String[] getParts();
+
+	/**
+	 * Returns the names of all parameters.
+	 *
+	 * @return The names of all parameters
+	 */
+	public Collection<String> getParameterNames();
 
 }

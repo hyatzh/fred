@@ -22,14 +22,12 @@ import freenet.node.SendableRequest;
 import freenet.node.SendableRequestItem;
 import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
+import freenet.support.Logger.LogLevel;
 import freenet.support.RandomGrabArray;
 import freenet.support.RemoveRandom.RemoveRandomReturn;
 import freenet.support.SectoredRandomGrabArray;
-import freenet.support.SectoredRandomGrabArrayWithInt;
 import freenet.support.SectoredRandomGrabArrayWithObject;
-import freenet.support.SortedVectorByNumber;
 import freenet.support.TimeUtil;
-import freenet.support.Logger.LogLevel;
 
 /** Chooses requests from both CRSCore and CRSNP */
 class ClientRequestSelector implements KeysFetchingLocally {
@@ -170,11 +168,11 @@ class ClientRequestSelector implements KeysFetchingLocally {
 	// We prevent a number of race conditions (e.g. adding a retry count and then another 
 	// thread removes it cos its empty) ... and in addToGrabArray etc we already sync on this.
 	// The worry is ... is there any nested locking outside of the hierarchy?
-	ChosenBlock removeFirstTransient(int fuzz, RandomSource random, OfferedKeysList offeredKeys, RequestStarter starter, ClientRequestSchedulerNonPersistent schedTransient, short maxPrio, ClientContext context, ObjectContainer container) {
+	ChosenBlock removeFirstTransient(int fuzz, RandomSource random, OfferedKeysList offeredKeys, RequestStarter starter, ClientRequestSchedulerNonPersistent schedTransient, short maxPrio, boolean realTime, ClientContext context, ObjectContainer container) {
 		// If a block is already running it will return null. Try to find a valid block in that case.
 		long now = System.currentTimeMillis();
 		for(int i=0;i<5;i++) {
-			SelectorReturn r = removeFirstInner(fuzz, random, offeredKeys, starter, null, schedTransient, true, false, maxPrio, context, container, now);
+			SelectorReturn r = removeFirstInner(fuzz, random, offeredKeys, starter, null, schedTransient, true, false, maxPrio, realTime, context, container, now);
 			SendableRequest req = null;
 			if(r != null && r.req != null) req = r.req;
 			if(req == null) continue;
@@ -189,14 +187,19 @@ class ClientRequestSelector implements KeysFetchingLocally {
 		return null;
 	}
 	
-	private int ctr;
-	
 	public ChosenBlock maybeMakeChosenRequest(SendableRequest req, ObjectContainer container, ClientContext context, long now) {
 		if(req == null) return null;
-		if(req.isCancelled(container)) return null;
-		if(req.getCooldownTime(container, context, now) != 0) return null;
+		if(req.isCancelled(container)) {
+			if(logMINOR) Logger.minor(this, "Request is cancelled: "+req);
+			return null;
+		}
+		if(req.getCooldownTime(container, context, now) != 0) {
+			if(logMINOR) Logger.minor(this, "Request is in cooldown: "+req);
+			return null;
+		}
 		SendableRequestItem token = req.chooseKey(this, req.persistent() ? container : null, context);
 		if(token == null) {
+			if(logMINOR) Logger.minor(this, "Choose key returned null: "+req);
 			return null;
 		} else {
 			Key key;
@@ -219,12 +222,14 @@ class ClientRequestSelector implements KeysFetchingLocally {
 			boolean ignoreStore;
 			boolean canWriteClientCache;
 			boolean forkOnCacheable;
+			boolean realTimeFlag;
 			if(req instanceof SendableGet) {
 				SendableGet sg = (SendableGet) req;
 				FetchContext ctx = sg.getContext(container);
 				localRequestOnly = ctx.localRequestOnly;
 				ignoreStore = ctx.ignoreStore;
 				canWriteClientCache = ctx.canWriteClientCache;
+				realTimeFlag = sg.realTimeFlag();
 				forkOnCacheable = false;
 			} else {
 				localRequestOnly = false;
@@ -232,14 +237,17 @@ class ClientRequestSelector implements KeysFetchingLocally {
 					canWriteClientCache = ((SendableInsert)req).canWriteClientCache(null);
 					forkOnCacheable = ((SendableInsert)req).forkOnCacheable(null);
 					localRequestOnly = ((SendableInsert)req).localRequestOnly(null);
+					realTimeFlag = ((SendableInsert)req).realTimeFlag();
 				} else {
 					canWriteClientCache = false;
 					forkOnCacheable = Node.FORK_ON_CACHEABLE_DEFAULT;
 					localRequestOnly = false;
+					realTimeFlag = false;
 				}
 				ignoreStore = false;
 			}
-			ret = new TransientChosenBlock(req, token, key, ckey, localRequestOnly, ignoreStore, canWriteClientCache, forkOnCacheable, sched);
+			ret = new TransientChosenBlock(req, token, key, ckey, localRequestOnly, ignoreStore, canWriteClientCache, forkOnCacheable, realTimeFlag, sched);
+			if(logMINOR) Logger.minor(this, "Created "+ret+" for "+req);
 			return ret;
 		}
 	}
@@ -257,7 +265,7 @@ class ClientRequestSelector implements KeysFetchingLocally {
 		}
 	}
 	
-	SelectorReturn removeFirstInner(int fuzz, RandomSource random, OfferedKeysList offeredKeys, RequestStarter starter, ClientRequestSchedulerCore schedCore, ClientRequestSchedulerNonPersistent schedTransient, boolean transientOnly, boolean notTransient, short maxPrio, ClientContext context, ObjectContainer container, long now) {
+	SelectorReturn removeFirstInner(int fuzz, RandomSource random, OfferedKeysList offeredKeys, RequestStarter starter, ClientRequestSchedulerCore schedCore, ClientRequestSchedulerNonPersistent schedTransient, boolean transientOnly, boolean notTransient, short maxPrio, boolean realTime, ClientContext context, ObjectContainer container, long now) {
 		// Priorities start at 0
 		if(logMINOR) Logger.minor(this, "removeFirst()");
 		if(schedCore == null) transientOnly = true;
@@ -510,6 +518,7 @@ outer:	for(;choosenPriorityClass <= maxPrio;choosenPriorityClass++) {
 				if(logMINOR) Logger.minor(this, "removeFirst() returning "+req+" (prio "+
 						req.getPriorityClass(container)+", client "+req.getClient(container)+", client-req "+req.getClientRequest()+ ')');
 				if(logMINOR) Logger.minor(this, "removeFirst() returning "+req+" of "+req.getClientRequest());
+				assert(req.realTimeFlag() == realTime);
 				return new SelectorReturn(req);
 				
 			}
@@ -591,6 +600,7 @@ outer:	for(;choosenPriorityClass <= maxPrio;choosenPriorityClass++) {
 		synchronized(keysFetching) {
 			boolean ret = keysFetching.contains(key);
 			if(!ret) return ret;
+			// It is being fetched. Add the BaseSendableGet to the wait list so it gets woken up when the request finishes.
 			if(getterWaiting != null) {
 				if(persistent) {
 					Long[] waiting = persistentRequestsWaitingForKeysFetching.get(key);

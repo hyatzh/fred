@@ -1,12 +1,11 @@
 package freenet.support.io;
 
 import java.io.File;
-import java.io.IOException;
 
 import com.db4o.ObjectContainer;
 
+import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
-import freenet.support.SimpleFieldSet;
 import freenet.support.Logger.LogLevel;
 import freenet.support.api.Bucket;
 
@@ -20,21 +19,33 @@ import freenet.support.api.Bucket;
  *
  * @author     giannij
  */
-public class TempFileBucket extends BaseFileBucket implements Bucket, SerializableToFieldSetBucket {
+public class TempFileBucket extends BaseFileBucket implements Bucket {
 	long filenameID;
 	final FilenameGenerator generator;
-	private static boolean logDebug = true;
 	private boolean readOnly;
 	private final boolean deleteOnFree;
 
-	/**
+        private static volatile boolean logMINOR;
+        private static volatile boolean logDEBUG;
+
+        static {
+            Logger.registerLogThresholdCallback(new LogThresholdCallback() {
+
+                @Override
+                public void shouldUpdate() {
+                    logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
+                    logDEBUG = Logger.shouldLog(LogLevel.DEBUG, this);
+                }
+            });
+        }
+	
+        /**
 	 * zero arg c'tor for db4o on jamvm
 	 */
 	protected TempFileBucket() {
 		generator = null;
 		deleteOnFree = false;
 	}
-
 	
 	public TempFileBucket(long id, FilenameGenerator generator) {
 		// deleteOnExit -> files get stuck in a big HashSet, whether or not
@@ -58,18 +69,10 @@ public class TempFileBucket extends BaseFileBucket implements Bucket, Serializab
 		this.filenameID = id;
 		this.generator = generator;
 		this.deleteOnFree = deleteOnFree;
-		synchronized(this) {
-			logDebug = Logger.shouldLog(LogLevel.DEBUG, this);
-		}
 
-		//System.err.println("FProxyServlet.TempFileBucket -- created: " +
-		//         f.getAbsolutePath());
-		synchronized(this) {
-			if (logDebug)
-				Logger.debug(
-					this,
-					"Initializing TempFileBucket(" + getFile());
-		}
+            if (logDEBUG) {
+                Logger.debug(this,"Initializing TempFileBucket(" + getFile());
+            }
 	}
 
 	@Override
@@ -79,14 +82,6 @@ public class TempFileBucket extends BaseFileBucket implements Bucket, Serializab
 		return deleteOnFree; // not if shadow
 	}
 	
-	@Override
-	public SimpleFieldSet toFieldSet() {
-		if(deleteOnFinalize())
-			return null; // Not persistent
-		// For subclasses i.e. PersistentTempFileBucket
-		return super.toFieldSet();
-	}
-
 	@Override
 	protected boolean createFileOnly() {
 		return false;
@@ -124,13 +119,13 @@ public class TempFileBucket extends BaseFileBucket implements Bucket, Serializab
 	}
 
 	public void removeFrom(ObjectContainer container) {
-		if(Logger.shouldLog(LogLevel.MINOR, this))
+		if(logMINOR)
 			Logger.minor(this, "Removing from database: "+this);
 		// filenameGenerator is a global, we don't need to worry about it.
 		container.delete(this);
 	}
 
-	public Bucket createShadow() throws IOException {
+	public Bucket createShadow() {
 		TempFileBucket ret = new TempFileBucket(filenameID, generator, false);
 		ret.setReadOnly();
 		if(!getFile().exists()) Logger.error(this, "File does not exist when creating shadow: "+getFile());

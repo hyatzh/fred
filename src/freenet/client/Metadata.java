@@ -22,9 +22,7 @@ import java.util.Map.Entry;
 
 import com.db4o.ObjectContainer;
 
-import freenet.client.ArchiveManager.ARCHIVE_TYPE;
 import freenet.client.async.BaseManifestPutter;
-import freenet.client.async.SplitFileFetcherSegment;
 import freenet.client.async.SplitFileSegmentKeys;
 import freenet.keys.BaseClientKey;
 import freenet.keys.ClientCHK;
@@ -35,6 +33,7 @@ import freenet.crypt.HashResult;
 import freenet.crypt.HashType;
 import freenet.crypt.SHA256;
 import freenet.support.Fields;
+import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
 import freenet.support.Logger.LogLevel;
 import freenet.support.api.Bucket;
@@ -44,11 +43,6 @@ import freenet.support.io.BucketTools;
 
 /** Metadata parser/writer class. */
 public class Metadata implements Cloneable {
-	private static volatile boolean logMINOR;
-
-	static {
-		Logger.registerClass(Metadata.class);
-	}
 
 	static final long FREENET_METADATA_MAGIC = 0xf053b2842d91482bL;
 	static final int MAX_SPLITFILE_PARAMS_LENGTH = 32768;
@@ -185,6 +179,18 @@ public class Metadata implements Cloneable {
 	public final int topBlocksTotal;
 	public final boolean topDontCompress;
 	public final short topCompatibilityMode;
+
+        private static volatile boolean logMINOR;
+        private static volatile boolean logDEBUG;
+	static {
+		Logger.registerLogThresholdCallback(new LogThresholdCallback(){
+			@Override
+			public void shouldUpdate(){
+				logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
+                                logDEBUG = Logger.shouldLog(LogLevel.DEBUG, this);
+			}
+		});
+	}
 
 	@Override
 	public Object clone() {
@@ -621,12 +627,8 @@ public class Metadata implements Cloneable {
 					throw new MetadataParseException("Impossibly long manifest entry: "+len+" - metadata size "+length);
 				byte[] data = new byte[len];
 				dis.readFully(data);
-				try {
-					Metadata m = Metadata.construct(data);
-					manifestEntries.put(name, m);
-				} catch (Throwable t) {
-					Logger.error(this, "Could not parse sub-manifest: "+t, t);
-				}
+				Metadata m = Metadata.construct(data);
+				manifestEntries.put(name, m);
 			}
 			if(logMINOR) Logger.minor(this, "End of manifest"); // Make it easy to search for it!
 		}
@@ -790,7 +792,7 @@ public class Metadata implements Cloneable {
 				Metadata data = (Metadata) dir.get(key);
 				if(data == null)
 					throw new NullPointerException();
-				if(Logger.shouldLog(LogLevel.DEBUG, this))
+				if(logDEBUG)
 					Logger.debug(this, "Putting metadata for "+key);
 				manifestEntries.put(key, data);
 			} else if(o instanceof HashMap) {
@@ -798,11 +800,11 @@ public class Metadata implements Cloneable {
 					Logger.error(this, "Creating a subdirectory called \"\" - it will not be possible to access this through fproxy!", new Exception("error"));
 				}
 				HashMap<String, Object> hm = Metadata.forceMap(o);
-				if(Logger.shouldLog(LogLevel.DEBUG, this))
+				if(logDEBUG)
 					Logger.debug(this, "Making metadata map for "+key);
 				Metadata subMap = mkRedirectionManifestWithMetadata(hm);
 				manifestEntries.put(key, subMap);
-				if(Logger.shouldLog(LogLevel.DEBUG, this))
+				if(logDEBUG)
 					Logger.debug(this, "Putting metadata map for "+key);
 			}
 		}
@@ -1335,6 +1337,7 @@ public class Metadata implements Cloneable {
 		dos.writeLong(FREENET_METADATA_MAGIC);
 		dos.writeShort(parsedVersion); // version
 		dos.writeByte(documentType);
+		boolean hasTopBlocks = topBlocksRequired != 0 || topBlocksTotal != 0 || topSize != 0 || topCompressedSize != 0 || topCompatibilityMode != 0;
 		if(haveFlags()) {
 			short flags = 0;
 			if(splitfile) flags |= FLAGS_SPLITFILE;
@@ -1345,7 +1348,7 @@ public class Metadata implements Cloneable {
 			if(fullKeys) flags |= FLAGS_FULL_KEYS;
 			if(compressionCodec != null) flags |= FLAGS_COMPRESSED;
 			if(hashes != null) flags |= FLAGS_HASHES;
-			if(topBlocksRequired != 0 || topBlocksTotal != 0 || topSize != 0 || topCompressedSize != 0) {
+			if(hasTopBlocks) {
 				assert(parsedVersion >= 1);
 				flags |= FLAGS_TOP_SIZE;
 			}
@@ -1360,7 +1363,7 @@ public class Metadata implements Cloneable {
 			}
 		}
 		
-		if(topBlocksRequired != 0 || topBlocksTotal != 0 || topSize != 0 || topCompressedSize != 0 || topCompatibilityMode != 0) {
+		if(hasTopBlocks) {
 			dos.writeLong(topSize);
 			dos.writeLong(topCompressedSize);
 			dos.writeInt(topBlocksRequired);
@@ -1425,16 +1428,25 @@ public class Metadata implements Cloneable {
 
 			dos.writeInt(splitfileBlocks);
 			dos.writeInt(splitfileCheckBlocks);
-			if(splitfileSingleCryptoKey == null) {
-				for(int i=0;i<splitfileBlocks;i++)
-					writeCHK(dos, splitfileDataKeys[i]);
-				for(int i=0;i<splitfileCheckBlocks;i++)
-					writeCHK(dos, splitfileCheckKeys[i]);
+			if(segments != null) {
+				for(int i=0;i<segmentCount;i++) {
+					segments[i].writeKeys(dos, false);
+				}
+				for(int i=0;i<segmentCount;i++) {
+					segments[i].writeKeys(dos, true);
+				}
 			} else {
-				for(int i=0;i<splitfileBlocks;i++)
-					dos.write(splitfileDataKeys[i].getRoutingKey());
-				for(int i=0;i<splitfileCheckBlocks;i++)
-					dos.write(splitfileCheckKeys[i].getRoutingKey());
+				if(splitfileSingleCryptoKey == null) {
+					for(int i=0;i<splitfileBlocks;i++)
+						writeCHK(dos, splitfileDataKeys[i]);
+					for(int i=0;i<splitfileCheckBlocks;i++)
+						writeCHK(dos, splitfileCheckKeys[i]);
+				} else {
+					for(int i=0;i<splitfileBlocks;i++)
+						dos.write(splitfileDataKeys[i].getRoutingKey());
+					for(int i=0;i<splitfileCheckBlocks;i++)
+						dos.write(splitfileCheckKeys[i].getRoutingKey());
+				}
 			}
 		}
 

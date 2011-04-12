@@ -9,6 +9,7 @@ import java.io.OutputStream;
 import java.util.LinkedList;
 
 import com.db4o.ObjectContainer;
+import freenet.support.LogThresholdCallback;
 
 import freenet.support.Logger;
 import freenet.support.OOMHandler;
@@ -20,6 +21,18 @@ public class FCPConnectionOutputHandler implements Runnable {
 	final LinkedList<FCPMessage> outQueue;
 	// Synced on outQueue
 	private boolean closedOutputQueue;
+
+        private static volatile boolean logMINOR;
+        private static volatile boolean logDEBUG;
+	static {
+		Logger.registerLogThresholdCallback(new LogThresholdCallback(){
+			@Override
+			public void shouldUpdate(){
+				logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
+                                logDEBUG = Logger.shouldLog(LogLevel.DEBUG, this);
+			}
+		});
+	}
 	
 	public FCPConnectionOutputHandler(FCPConnectionHandler handler) {
 		this.handler = handler;
@@ -37,7 +50,7 @@ public class FCPConnectionOutputHandler implements Runnable {
 		try {
 			realRun();
 		} catch (IOException e) {
-			if(Logger.shouldLog(LogLevel.MINOR, this))
+			if(logMINOR)
 				Logger.minor(this, "Caught "+e, e);
 		} catch (OutOfMemoryError e) {
 			OOMHandler.handleOOM(e);
@@ -60,8 +73,10 @@ public class FCPConnectionOutputHandler implements Runnable {
 		while(true) {
 			boolean closed;
 			FCPMessage msg = null;
+			boolean flushed = false;
 			while(true) {
 				closed = handler.isClosed();
+				boolean shouldFlush = false;
 				synchronized(outQueue) {
 					if(outQueue.isEmpty()) {
 						if(closed) {
@@ -69,15 +84,25 @@ public class FCPConnectionOutputHandler implements Runnable {
 							outQueue.notifyAll();
 							break;
 						}
-						os.flush();
-						try {
-							outQueue.wait();
-						} catch (InterruptedException e) {
-							// Ignore
+						if(!flushed)
+							shouldFlush = true;
+						else {
+							try {
+								outQueue.wait();
+							} catch (InterruptedException e) {
+								// Ignore
+							}
+							continue;
 						}
-						continue;
+					} else {
+						msg = outQueue.removeFirst();
 					}
-					msg = outQueue.removeFirst();
+				}
+				if(shouldFlush) {
+					os.flush();
+					flushed = true;
+					continue;
+				} else {
 					break;
 				}
 			}
@@ -89,19 +114,30 @@ public class FCPConnectionOutputHandler implements Runnable {
 				}
 			} else {
 				msg.send(os);
+				flushed = false;
 			}
 		}
 	}
 
 	public void queue(FCPMessage msg) {
-		if(Logger.shouldLog(LogLevel.DEBUG, this))
+		if(logDEBUG)
 			Logger.debug(this, "Queueing "+msg, new Exception("debug"));
 		if(msg == null) throw new NullPointerException();
+		boolean neverDropAMessage = handler.server.neverDropAMessage();
+		int MAX_QUEUE_LENGTH = handler.server.maxMessageQueueLength();
 		synchronized(outQueue) {
 			if(closedOutputQueue) {
 				Logger.error(this, "Closed already: "+this+" queueing message "+msg);
 				// FIXME throw something???
 				return;
+			}
+			if(outQueue.size() >= MAX_QUEUE_LENGTH) {
+				if(neverDropAMessage) {
+					Logger.error(this, "FCP message queue length is "+outQueue.size()+" for "+handler+" - not dropping message as configured...");
+				} else {
+					Logger.error(this, "Dropping FCP message to "+handler+" : "+outQueue.size()+" messages queued - maybe client died?", new Exception("debug"));
+					return;
+				}
 			}
 			outQueue.add(msg);
 			outQueue.notifyAll();
@@ -127,6 +163,13 @@ public class FCPConnectionOutputHandler implements Runnable {
 
 	public boolean objectCanNew(ObjectContainer container) {
 		throw new UnsupportedOperationException("FCPConnectionOutputHandler storage in database not supported");
+	}
+
+	public boolean isQueueHalfFull() {
+		int MAX_QUEUE_LENGTH = handler.server.maxMessageQueueLength();
+		synchronized(outQueue) {
+			return outQueue.size() > MAX_QUEUE_LENGTH / 2;
+		}
 	}
 	
 }

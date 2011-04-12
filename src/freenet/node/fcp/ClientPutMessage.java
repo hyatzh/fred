@@ -16,6 +16,7 @@ import freenet.node.Node;
 import freenet.node.RequestStarter;
 import freenet.support.Fields;
 import freenet.support.HexUtil;
+import freenet.support.Logger;
 import freenet.support.SimpleFieldSet;
 import freenet.support.api.Bucket;
 import freenet.support.api.BucketFactory;
@@ -80,6 +81,7 @@ public class ClientPutMessage extends DataCarryingMessage {
 	final InsertContext.CompatibilityMode compatibilityMode;
 	final byte[] overrideSplitfileCryptoKey;
 	final boolean localRequestOnly;
+	final boolean realTimeFlag;
 	
 	public static final short UPLOAD_FROM_DIRECT = 0;
 	public static final short UPLOAD_FROM_DISK = 1;
@@ -270,6 +272,7 @@ public class ClientPutMessage extends DataCarryingMessage {
 			forkOnCacheable = Node.FORK_ON_CACHEABLE_DEFAULT;
 		extraInsertsSingleBlock = fs.getInt("ExtraInsertsSingleBlock", HighLevelSimpleClientImpl.EXTRA_INSERTS_SINGLE_BLOCK);
 		extraInsertsSplitfileHeaderBlock = fs.getInt("ExtraInsertsSplitfileHeaderBlock", HighLevelSimpleClientImpl.EXTRA_INSERTS_SPLITFILE_HEADER);
+		realTimeFlag = fs.getBoolean("RealTimeFlag", false);
 	}
 
 	@Override
@@ -365,6 +368,12 @@ public class ClientPutMessage extends DataCarryingMessage {
 	}
 
 	public void freeData(ObjectContainer container) {
+		if(bucket == null) {
+			if(dataLength() <= 0)
+				return; // Okay.
+			Logger.error(this, "bucket is null on "+this+" - freed twice?", new Exception("error"));
+			return;
+		}
 		if(persistenceType == ClientRequest.PERSIST_FOREVER)
 			container.activate(bucket, 5);
 		bucket.free();

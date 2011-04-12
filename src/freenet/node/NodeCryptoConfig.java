@@ -56,7 +56,10 @@ public class NodeCryptoConfig {
 	private boolean paddDataPackets;
 	
 	NodeCryptoConfig(SubConfig config, int sortOrder, boolean isOpennet, SecurityLevels securityLevels) throws NodeInitException {
-		config.register("listenPort", -1 /* means random */, sortOrder++, true, true, "Node.port", "Node.portLong",	new IntCallback() {
+		config.register("listenPort", -1 /* means random */, sortOrder++, true, true,
+				isOpennet ? "Node.opennetPort" : "Node.port", 
+				isOpennet ? "Node.opennetPortLong" : "Node.portLong", 
+						new IntCallback() {
 			@Override
 			public Integer get() {
 				synchronized(NodeCryptoConfig.class) {
@@ -131,7 +134,9 @@ public class NodeCryptoConfig {
 		}, false);
 		dropProbability = config.getInt("testingDropPacketsEvery"); 
 		
-		config.register("oneConnectionPerIP", isOpennet, sortOrder++, true, false, "Node.oneConnectionPerIP", "Node.oneConnectionPerIPLong",
+		config.register("oneConnectionPerIP", isOpennet, sortOrder++, true, false,
+				(isOpennet ? "OpennetManager" : "Node") + ".oneConnectionPerIP",
+				(isOpennet ? "OpennetManager" : "Node") + ".oneConnectionPerIPLong",
 				new BooleanCallback() {
 
 					@Override
@@ -185,19 +190,6 @@ public class NodeCryptoConfig {
 					}			
 		});
 		alwaysAllowLocalAddresses = config.getBoolean("alwaysAllowLocalAddresses");
-		
-		if(!isOpennet) {
-			securityLevels.addFriendsThreatLevelListener(new SecurityLevelListener<FRIENDS_THREAT_LEVEL>() {
-
-				public void onChange(FRIENDS_THREAT_LEVEL oldLevel, FRIENDS_THREAT_LEVEL newLevel) {
-					if(newLevel == FRIENDS_THREAT_LEVEL.HIGH)
-						alwaysAllowLocalAddresses = false;
-					if(oldLevel == FRIENDS_THREAT_LEVEL.HIGH)
-						alwaysAllowLocalAddresses = false;
-				}
-				
-			});
-		}
 		
 		config.register("assumeNATed", true, sortOrder++, true, true, "Node.assumeNATed", "Node.assumeNATedLong", new BooleanCallback() {
 

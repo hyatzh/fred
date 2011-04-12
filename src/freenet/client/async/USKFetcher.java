@@ -173,12 +173,14 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 		boolean dnf;
 		boolean cancelled;
 		final Lookup lookup;
+		final boolean forever;
 		public USKAttempt(Lookup l, boolean forever) {
 			this.lookup = l;
 			this.number = l.val;
 			this.succeeded = false;
 			this.dnf = false;
-			this.checker = new USKChecker(this, l.key, forever ? -1 : ctx.maxUSKRetries, l.ignoreStore ? ctxNoStore : ctx, parent);
+			this.forever = forever;
+			this.checker = new USKChecker(this, l.key, forever ? -1 : ctx.maxUSKRetries, l.ignoreStore ? ctxNoStore : ctx, parent, realTimeFlag);
 		}
 		public void onDNF(ClientContext context) {
 			checker = null;
@@ -234,6 +236,14 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 		
 		public short getPriority() {
 			if(backgroundPoll) {
+				if(forever) {
+					// Boost the priority for the regular next-slot polling to ensure ULPRs work.
+					short prio = normalPollPriority;
+					prio--;
+					// But don't go higher than progressPollPriority.
+					if(prio > progressPollPriority) prio = progressPollPriority;
+					return prio;
+				}
 				if(progressed && !firstLoop) {
 					// Just advanced, boost the priority.
 					// Do NOT boost the priority if just started.
@@ -269,6 +279,8 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 	
 	private boolean started;
 	
+	private final boolean realTimeFlag;
+	
 	private static short DEFAULT_NORMAL_POLL_PRIORITY = RequestStarter.PREFETCH_PRIORITY_CLASS;
 	private short normalPollPriority = DEFAULT_NORMAL_POLL_PRIORITY;
 	private static short DEFAULT_PROGRESS_POLL_PRIORITY = RequestStarter.UPDATE_PRIORITY_CLASS;
@@ -286,6 +298,7 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 		callbacks = new LinkedList<USKFetcherCallback>();
 		subscribers = new HashSet<USKCallback>();
 		lastFetchedEdition = -1;
+		this.realTimeFlag = parent.realTimeFlag();
 		if(ctx.followRedirects) {
 			this.ctx = ctx.clone();
 			this.ctx.followRedirects = false;
@@ -374,15 +387,15 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 			}
 			schedule(end-now, null, context);
 		} else {
-			uskManager.unsubscribe(origUSK, this);
-			uskManager.onFinished(this);
-			context.getSskFetchScheduler().schedTransient.removePendingKeys((KeyListener)this);
-			long ed = uskManager.lookupLatestSlot(origUSK);
 			USKFetcherCallback[] cb;
 			synchronized(this) {
 				completed = true;
 				cb = callbacks.toArray(new USKFetcherCallback[callbacks.size()]);
 			}
+			uskManager.unsubscribe(origUSK, this);
+			uskManager.onFinished(this);
+			context.getSskFetchScheduler(realTimeFlag).schedTransient.removePendingKeys((KeyListener)this);
+			long ed = uskManager.lookupLatestSlot(origUSK);
 			byte[] data;
 			if(lastRequestData == null)
 				data = null;
@@ -604,8 +617,9 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 	public void schedule(ObjectContainer container, ClientContext context) {
 		synchronized(this) {
 			if(cancelled) return;
+			if(completed) return;
 		}
-		context.getSskFetchScheduler().schedTransient.addPendingKeys(this);
+		context.getSskFetchScheduler(realTimeFlag).schedTransient.addPendingKeys(this);
 		updatePriorities();
 		uskManager.subscribe(origUSK, this, false, parent.getClient());
 		long lookedUp = uskManager.lookupLatestSlot(origUSK);
@@ -613,8 +627,8 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 		boolean bye = false;
 		synchronized(this) {
 			valueAtSchedule = Math.max(lookedUp+1, valueAtSchedule);
-			bye = cancelled;
-			if(!cancelled) {
+			bye = cancelled || completed;
+			if(!bye) {
 				
 				// subscribe() above may have called onFoundEdition and thus added a load of stuff. If so, we don't need to do so here.
 				if((!checkStoreOnly) && attemptsToStart.isEmpty() && runningAttempts.isEmpty() && pollingAttempts.isEmpty()) {
@@ -640,13 +654,13 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 		if(!bye) return;
 		// We have been cancelled.
 		uskManager.unsubscribe(origUSK, this);
-		context.getSskFetchScheduler().schedTransient.removePendingKeys((KeyListener)this);
+		context.getSskFetchScheduler(realTimeFlag).schedTransient.removePendingKeys((KeyListener)this);
 		uskManager.onFinished(this, true);
 	}
 
 	public void cancel(ObjectContainer container, ClientContext context) {
 		uskManager.unsubscribe(origUSK, this);
-		context.getSskFetchScheduler().schedTransient.removePendingKeys((KeyListener)this);
+		context.getSskFetchScheduler(realTimeFlag).schedTransient.removePendingKeys((KeyListener)this);
 		assert(container == null);
 		USKAttempt[] attempts;
 		USKAttempt[] polling;
@@ -971,7 +985,7 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 			
 		runningStoreChecker = new StoreCheckerGetter(parent, checker);
 		try {
-			context.getSskFetchScheduler().register(null, new SendableGet[] { runningStoreChecker } , false, null, null, false);
+			context.getSskFetchScheduler(realTimeFlag).register(null, new SendableGet[] { runningStoreChecker } , false, null, null, false);
 		} catch (KeyListenerConstructionException e1) {
 			// Impossible
 			runningStoreChecker = null;
@@ -990,7 +1004,7 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 	class StoreCheckerGetter extends SendableGet {
 		
 		public StoreCheckerGetter(ClientRequester parent, USKStoreChecker c) {
-			super(parent);
+			super(parent, USKFetcher.this.realTimeFlag);
 			checker = c;
 		}
 
@@ -1094,7 +1108,7 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 
 		@Override
 		public RequestClient getClient(ObjectContainer container) {
-			return USKFetcher.this.uskManager;
+			return realTimeFlag ? USKManager.rcRT : USKManager.rcBulk;
 		}
 
 		@Override
@@ -1218,6 +1232,10 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 		}
 	}
 
+	public boolean isRealTime() {
+		return realTimeFlag;
+	}
+	
 	/**
 	 * Tracks the list of editions that we want to fetch, from various sources - subscribers, origUSK,
 	 * last known slot from USKManager, etc.
@@ -1233,7 +1251,7 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 		final byte cryptoAlgorithm;
 		
 		// List of slots since the USKManager's current last known good edition.
-		private final KeyList fromLastKnownGood;
+		private final KeyList fromLastKnownSlot;
 		private TreeMap<Long, KeyList> fromSubscribers;
 		private TreeSet<Long> persistentHints = new TreeSet<Long>();
 		//private ArrayList<KeyList> fromCallbacks;
@@ -1244,7 +1262,7 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 			this.pubKeyHash = origUSK.pubKeyHash;
 			this.cryptoAlgorithm = origUSK.cryptoAlgorithm;
 			if(logMINOR) Logger.minor(this, "Creating KeyList from last known good: "+lookedUp);
-			fromLastKnownGood = new KeyList(lookedUp);
+			fromLastKnownSlot = new KeyList(lookedUp);
 			fromSubscribers = new TreeMap<Long, KeyList>();
 			if(origUSK.suggestedEdition > lookedUp)
 				fromSubscribers.put(origUSK.suggestedEdition, new KeyList(origUSK.suggestedEdition));
@@ -1279,7 +1297,7 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 				lookedUp > -1 || (backgroundPoll && !firstLoop) || fromSubscribers.isEmpty();
 			
 			if(probeFromLastKnownGood)
-				fromLastKnownGood.getNextEditions(toFetch, toPoll, lookedUp, alreadyRunning, random);
+				fromLastKnownSlot.getNextEditions(toFetch, toPoll, lookedUp, alreadyRunning, random);
 			
 			// If we have moved past the origUSK, then clear the KeyList for it.
 			for(Iterator<Entry<Long,KeyList>> it = fromSubscribers.entrySet().iterator();it.hasNext();) {
@@ -1304,7 +1322,7 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 			allowedRandom -= runningRandom;
 			
 			if(allowedRandom > 0 && probeFromLastKnownGood) {
-				fromLastKnownGood.getRandomEditions(toFetch, lookedUp, alreadyRunning, random, Math.min(2, allowedRandom));
+				fromLastKnownSlot.getRandomEditions(toFetch, lookedUp, alreadyRunning, random, Math.min(2, allowedRandom));
 				allowedRandom-=2;
 			}
 			
@@ -1543,7 +1561,7 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 			 * @param curBaseEdition The edition to check from. If this is different to firstSlot, we will
 			 * update ehDocnames. */
 			private long match(NodeSSK key, long curBaseEdition, RemoveRangeArrayList<byte[]> ehDocnames) {
-				if(logMINOR) Logger.minor(this, "Matching "+key+" cur base edition "+curBaseEdition+" first slot was "+firstSlot);
+				if(logMINOR) Logger.minor(this, "Matching "+key+" cur base edition "+curBaseEdition+" first slot was "+firstSlot+" for "+origUSK+" on "+this);
 				if(firstSlot < curBaseEdition) {
 					if(firstSlot + ehDocnames.size() <= curBaseEdition) {
 						// No overlap. Clear it and start again.
@@ -1564,11 +1582,9 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 						return key == null ? -1 : innerMatch(key, ehDocnames, WATCH_KEYS - size, size, firstSlot);
 					}
 				} else if(firstSlot > curBaseEdition) {
-					// It has regressed???
-					Logger.error(this, "First slot was "+firstSlot+" now is "+curBaseEdition+" on "+USKFetcher.this+" "+this, new Exception("debug"));
-					firstSlot = curBaseEdition;
-					ehDocnames.clear();
-					generate(curBaseEdition, WATCH_KEYS, ehDocnames);
+					// Normal due to race conditions. We don't always report the new edition to the USKManager immediately.
+					// So ignore it.
+					if(logMINOR) Logger.minor(this, "Ignoring regression in match() from "+curBaseEdition+" to "+firstSlot);
 					return key == null ? -1 : innerMatch(key, ehDocnames, 0, ehDocnames.size(), firstSlot);
 				}
 				return -1;
@@ -1606,7 +1622,7 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 			// FIXME: Take into account origUSK, subscribers, etc.
 			if(logMINOR) Logger.minor(this, "Getting datastore checker from "+lastSlot+" for "+origUSK+" on "+USKFetcher.this, new Exception("debug"));
 			ArrayList<KeyList.StoreSubChecker> checkers = new ArrayList<KeyList.StoreSubChecker>();
-			KeyList.StoreSubChecker c = fromLastKnownGood.checkStore(lastSlot+1);
+			KeyList.StoreSubChecker c = fromLastKnownSlot.checkStore(lastSlot+1);
 			if(c != null) checkers.add(c);
 			// If we have moved past the origUSK, then clear the KeyList for it.
 			for(Iterator<Entry<Long,KeyList>> it = fromSubscribers.entrySet().iterator(); it.hasNext(); ) {
@@ -1629,7 +1645,8 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 		}
 		
 		public synchronized long match(NodeSSK key, long lastSlot) {
-			long ret = fromLastKnownGood.match(key, lastSlot);
+			if(logMINOR) Logger.minor(this, "Trying to match "+key+" from slot "+lastSlot+" for "+origUSK);
+			long ret = fromLastKnownSlot.match(key, lastSlot);
 			if(ret != -1) return ret;
 			
 			for(Iterator<Entry<Long,KeyList>> it = fromSubscribers.entrySet().iterator(); it.hasNext(); ) {
@@ -1665,5 +1682,5 @@ public class USKFetcher implements ClientGetState, USKCallback, HasKeyListener, 
 		}
 		
 	}
-	
+
 }

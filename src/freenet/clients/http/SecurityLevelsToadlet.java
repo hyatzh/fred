@@ -21,6 +21,7 @@ import freenet.node.SecurityLevels.FRIENDS_THREAT_LEVEL;
 import freenet.node.SecurityLevels.NETWORK_THREAT_LEVEL;
 import freenet.node.SecurityLevels.PHYSICAL_THREAT_LEVEL;
 import freenet.support.HTMLNode;
+import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
 import freenet.support.MultiValueTable;
 import freenet.support.Logger.LogLevel;
@@ -36,6 +37,16 @@ public class SecurityLevelsToadlet extends Toadlet {
 	public static final int MAX_PASSWORD_LENGTH = 1024;
 	private final NodeClientCore core;
 	private final Node node;
+
+        private static volatile boolean logMINOR;
+	static {
+		Logger.registerLogThresholdCallback(new LogThresholdCallback(){
+			@Override
+			public void shouldUpdate(){
+				logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
+			}
+		});
+	}
 
 	SecurityLevelsToadlet(HighLevelSimpleClient client, Node node, NodeClientCore core) {
 		super(client);
@@ -75,13 +86,11 @@ public class SecurityLevelsToadlet extends Toadlet {
 					if(!request.isPartSet(confirm) && !request.isPartSet(tryConfirm)) {
 						HTMLNode warning = node.securityLevels.getConfirmWarning(newThreatLevel, confirm);
 						if(warning != null) {
-							if(pageNode == null) {
-								PageNode page = ctx.getPageMaker().getPageNode(NodeL10n.getBase().getString("ConfigToadlet.fullTitle", new String[] { "name" }, new String[] { node.getMyName() }), ctx);
-								pageNode = page.outer;
-								content = page.content;
-								formNode = ctx.addFormChild(content, ".", "configFormSecLevels");
-								ul = formNode.addChild("ul", "class", "config");
-							}
+							PageNode page = ctx.getPageMaker().getPageNode(NodeL10n.getBase().getString("ConfigToadlet.fullTitle", new String[] { "name" }, new String[] { node.getMyName() }), ctx);
+							pageNode = page.outer;
+							content = page.content;
+							formNode = ctx.addFormChild(content, ".", "configFormSecLevels");
+							ul = formNode.addChild("ul", "class", "config");
 							HTMLNode seclevelGroup = ul.addChild("li");
 
 							seclevelGroup.addChild("input", new String[] { "type", "name", "value" }, new String[] { "hidden", configName, networkThreatLevel });
@@ -103,51 +112,13 @@ public class SecurityLevelsToadlet extends Toadlet {
 				}
 			}
 
-			configName = "security-levels.friendsThreatLevel";
-			confirm = "security-levels.friendsThreatLevel.confirm";
-			tryConfirm = "security-levels.friendsThreatLevel.tryConfirm";
-			String friendsThreatLevel = request.getPartAsString(configName, 128);
-			FRIENDS_THREAT_LEVEL newFriendsLevel = SecurityLevels.parseFriendsThreatLevel(friendsThreatLevel);
-			if(newFriendsLevel != null) {
-				if(newFriendsLevel != node.securityLevels.getFriendsThreatLevel()) {
-					if(!request.isPartSet(confirm) && !request.isPartSet(tryConfirm)) {
-						HTMLNode warning = node.securityLevels.getConfirmWarning(newFriendsLevel, confirm);
-						if(warning != null) {
-							if(pageNode == null) {
-								PageNode page = ctx.getPageMaker().getPageNode(NodeL10n.getBase().getString("ConfigToadlet.fullTitle", new String[] { "name" }, new String[] { node.getMyName() }), ctx);
-								pageNode = page.outer;
-								content = page.content;
-								formNode = ctx.addFormChild(content, ".", "configFormSecLevels");
-								ul = formNode.addChild("ul", "class", "config");
-							}
-							HTMLNode seclevelGroup = ul.addChild("li");
-
-							seclevelGroup.addChild("input", new String[] { "type", "name", "value" }, new String[] { "hidden", configName, friendsThreatLevel });
-							HTMLNode infobox = seclevelGroup.addChild("div", "class", "infobox infobox-information");
-							infobox.addChild("div", "class", "infobox-header", l10nSec("friendsThreatLevelConfirmTitle", "mode", SecurityLevels.localisedName(newFriendsLevel)));
-							HTMLNode infoboxContent = infobox.addChild("div", "class", "infobox-content");
-							infoboxContent.addChild(warning);
-							infoboxContent.addChild("input", new String[] { "type", "name", "value" }, new String[] { "hidden", tryConfirm, "on" });
-						} else {
-							// Apply immediately, no confirm needed.
-							node.securityLevels.setThreatLevel(newFriendsLevel);
-							changedAnything = true;
-						}
-					} else if(request.isPartSet(confirm)) {
-						// Apply immediately, user confirmed it.
-						node.securityLevels.setThreatLevel(newFriendsLevel);
-						changedAnything = true;
-					}
-				}
-			}
-
 			configName = "security-levels.physicalThreatLevel";
 			confirm = "security-levels.physicalThreatLevel.confirm";
 			tryConfirm = "security-levels.physicalThreatLevel.tryConfirm";
 			String physicalThreatLevel = request.getPartAsString(configName, 128);
 			PHYSICAL_THREAT_LEVEL newPhysicalLevel = SecurityLevels.parsePhysicalThreatLevel(physicalThreatLevel);
 			PHYSICAL_THREAT_LEVEL oldPhysicalLevel = core.node.securityLevels.getPhysicalThreatLevel();
-			if(Logger.shouldLog(LogLevel.MINOR, this)) Logger.minor(this, "New physical threat level: "+newPhysicalLevel+" old = "+node.securityLevels.getPhysicalThreatLevel());
+			if(logMINOR) Logger.minor(this, "New physical threat level: "+newPhysicalLevel+" old = "+node.securityLevels.getPhysicalThreatLevel());
 			if(newPhysicalLevel != null) {
 				if(newPhysicalLevel == oldPhysicalLevel && newPhysicalLevel == PHYSICAL_THREAT_LEVEL.HIGH) {
 					String password = request.getPartAsString("masterPassword", MAX_PASSWORD_LENGTH);
@@ -516,9 +487,11 @@ public class SecurityLevelsToadlet extends Toadlet {
 			}
 			input.addChild("b", l10nSec("networkThreatLevel.name."+level));
 			input.addChild("#", ": ");
-			NodeL10n.getBase().addL10nSubstitution(input, "SecurityLevels.networkThreatLevel.choice."+level, new String[] { "bold", "/bold" }, new String[] { "<b>", "</b>" });
+			NodeL10n.getBase().addL10nSubstitution(input, "SecurityLevels.networkThreatLevel.choice."+level, new String[] { "bold" },
+					new HTMLNode[] { HTMLNode.STRONG });
 			HTMLNode inner = input.addChild("p").addChild("i");
-			NodeL10n.getBase().addL10nSubstitution(inner, "SecurityLevels.networkThreatLevel.desc."+level, new String[] { "bold", "/bold" }, new String[] { "<b>", "</b>" });
+			NodeL10n.getBase().addL10nSubstitution(inner, "SecurityLevels.networkThreatLevel.desc."+level, new String[] { "bold" },
+					new HTMLNode[] { HTMLNode.STRONG });
 		}
 
 		p = seclevelGroup.addChild("p");
@@ -535,34 +508,13 @@ public class SecurityLevelsToadlet extends Toadlet {
 			}
 			input.addChild("b", l10nSec("networkThreatLevel.name."+level));
 			input.addChild("#", ": ");
-			NodeL10n.getBase().addL10nSubstitution(input, "SecurityLevels.networkThreatLevel.choice."+level, new String[] { "bold", "/bold" }, new String[] { "<b>", "</b>" });
+			NodeL10n.getBase().addL10nSubstitution(input, "SecurityLevels.networkThreatLevel.choice."+level, new String[] { "bold" },
+					new HTMLNode[] { HTMLNode.STRONG });
 			HTMLNode inner = input.addChild("p").addChild("i");
-			NodeL10n.getBase().addL10nSubstitution(inner, "SecurityLevels.networkThreatLevel.desc."+level, new String[] { "bold", "/bold" }, new String[] { "<b>", "</b>" });
+			NodeL10n.getBase().addL10nSubstitution(inner, "SecurityLevels.networkThreatLevel.desc."+level, new String[] { "bold" },
+					new HTMLNode[] { HTMLNode.STRONG });
 		}
 		seclevelGroup.addChild("p").addChild("b", l10nSec("networkThreatLevel.opennetFriendsWarning"));
-
-		// Friends security level
-		formNode.addChild("div", "class", "configprefix", l10nSec("friendsThreatLevelShort"));
-		ul = formNode.addChild("ul", "class", "config");
-		seclevelGroup = ul.addChild("li");
-		seclevelGroup.addChild("#", l10nSec("friendsThreatLevel"));
-
-		FRIENDS_THREAT_LEVEL friendsLevel = node.securityLevels.getFriendsThreatLevel();
-
-		controlName = "security-levels.friendsThreatLevel";
-		for(FRIENDS_THREAT_LEVEL level : FRIENDS_THREAT_LEVEL.values()) {
-			HTMLNode input;
-			if(level == friendsLevel) {
-				input = seclevelGroup.addChild("p").addChild("input", new String[] { "type", "checked", "name", "value" }, new String[] { "radio", "on", controlName, level.name() });
-			} else {
-				input = seclevelGroup.addChild("p").addChild("input", new String[] { "type", "name", "value" }, new String[] { "radio", controlName, level.name() });
-			}
-			input.addChild("b", l10nSec("friendsThreatLevel.name."+level));
-			input.addChild("#", ": ");
-			NodeL10n.getBase().addL10nSubstitution(input, "SecurityLevels.friendsThreatLevel.choice."+level, new String[] { "bold", "/bold" }, new String[] { "<b>", "</b>" });
-			HTMLNode inner = input.addChild("p").addChild("i");
-			NodeL10n.getBase().addL10nSubstitution(inner, "SecurityLevels.friendsThreatLevel.desc."+level, new String[] { "bold", "/bold" }, new String[] { "<b>", "</b>" });
-		}
 
 		// Physical security level
 		formNode.addChild("div", "class", "configprefix", l10nSec("physicalThreatLevelShort"));
@@ -582,9 +534,11 @@ public class SecurityLevelsToadlet extends Toadlet {
 			}
 			input.addChild("b", l10nSec("physicalThreatLevel.name."+level));
 			input.addChild("#", ": ");
-			NodeL10n.getBase().addL10nSubstitution(input, "SecurityLevels.physicalThreatLevel.choice."+level, new String[] { "bold", "/bold" }, new String[] { "<b>", "</b>" });
+			NodeL10n.getBase().addL10nSubstitution(input, "SecurityLevels.physicalThreatLevel.choice."+level, new String[] { "bold" },
+					new HTMLNode[] { HTMLNode.STRONG });
 			HTMLNode inner = input.addChild("p").addChild("i");
-			NodeL10n.getBase().addL10nSubstitution(inner, "SecurityLevels.physicalThreatLevel.desc."+level, new String[] { "bold", "/bold" }, new String[] { "<b>", "</b>" });
+			NodeL10n.getBase().addL10nSubstitution(inner, "SecurityLevels.physicalThreatLevel.desc."+level, new String[] { "bold" },
+					new HTMLNode[] { HTMLNode.STRONG });
 			if(level != PHYSICAL_THREAT_LEVEL.LOW && physicalLevel == PHYSICAL_THREAT_LEVEL.LOW && node.hasDatabase() && !node.isDatabaseEncrypted()) {
 				if(node.autoChangeDatabaseEncryption())
 					inner.addChild("b", " "+l10nSec("warningWillEncrypt"));
@@ -596,6 +550,9 @@ public class SecurityLevelsToadlet extends Toadlet {
 				else
 					inner.addChild("b", " "+l10nSec("warningWontDecrypt"));
 			}
+			if(level == PHYSICAL_THREAT_LEVEL.LOW) {
+				NodeL10n.getBase().addL10nSubstitution(input.addChild("p").addChild("i"), "SecurityLevels.physicalThreatLevelSwapfile", new String[] { "bold" }, new HTMLNode[] { HTMLNode.STRONG });
+			}
 			if(level == PHYSICAL_THREAT_LEVEL.MAXIMUM && node.hasDatabase()) {
 				inner.addChild("b", " "+l10nSec("warningMaximumWillDeleteQueue"));
 			}
@@ -606,7 +563,7 @@ public class SecurityLevelsToadlet extends Toadlet {
 					// Add password form
 					p = inner.addChild("p");
 					p.addChild("label", "for", "passwordBox", l10nSec("setPassword"));
-					p.addChild("input", new String[] { "id", "type", "name" }, new String[] { "passwordBox", "text", "masterPassword" });
+					p.addChild("input", new String[] { "id", "type", "name" }, new String[] { "passwordBox", "password", "masterPassword" });
 				}
 			}
 		}
@@ -624,12 +581,12 @@ public class SecurityLevelsToadlet extends Toadlet {
 		HTMLNode cell = row.addChild("td");
 		cell.addChild("label", "for", "oldPasswordBox", l10nSec("oldPasswordLabel"));
 		cell = row.addChild("td");
-		cell.addChild("input", new String[] { "id", "type", "name", "size" }, new String[] { "oldPasswordBox", "text", "oldPassword", "100" });
+		cell.addChild("input", new String[] { "id", "type", "name", "size" }, new String[] { "oldPasswordBox", "password", "oldPassword", "100" });
 		row = table.addChild("tr");
 		cell = row.addChild("td");
 		cell.addChild("label", "for", "newPasswordBox", l10nSec("newPasswordLabel"));
 		cell = row.addChild("td");
-		cell.addChild("input", new String[] { "id", "type", "name", "size" }, new String[] { "passwordBox", "text", "masterPassword", "100" });
+		cell.addChild("input", new String[] { "id", "type", "name", "size" }, new String[] { "passwordBox", "password", "masterPassword", "100" });
 		HTMLNode p = inner.addChild("p");
 		p.addChild("input", new String[] { "type", "name", "value" }, new String[] { "submit", "changePassword", l10nSec("changePasswordButton") });
 	}
@@ -718,7 +675,7 @@ public class SecurityLevelsToadlet extends Toadlet {
 
 		HTMLNode form = forFirstTimeWizard ? ctx.addFormChild(content, "/wizard/", "masterPasswordForm") :
 			ctx.addFormChild(content, "/seclevels/", "masterPasswordForm");
-		form.addChild("input", new String[] { "type", "name", "size" }, new String[] { "text", "masterPassword", "100" });
+		form.addChild("input", new String[] { "type", "name", "size" }, new String[] { "password", "masterPassword", "100" });
 		if(physicalSecurityLevel != null) {
 			form.addChild("input", new String[] { "type", "name", "value" }, new String[] { "hidden", "security-levels.physicalThreatLevel", physicalSecurityLevel });
 			form.addChild("input", new String[] { "type", "name", "value" }, new String[] { "hidden", "seclevels", "true" });

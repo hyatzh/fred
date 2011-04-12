@@ -19,6 +19,8 @@ import freenet.node.Node;
 import freenet.node.NodeInitException;
 import freenet.node.NodeStarter;
 import freenet.node.PeerNode;
+import freenet.node.DarknetPeerNode.FRIEND_TRUST;
+import freenet.node.SyncSendWaitedTooLongException;
 import freenet.support.Executor;
 import freenet.support.Logger;
 import freenet.support.PooledExecutor;
@@ -46,6 +48,8 @@ public class RealNodeSecretPingTest {
 	static final int SECRETPONG_TIMEOUT=5000;
 	static final long storeSize = 1024*1024;
 	
+	static final FRIEND_TRUST trust = FRIEND_TRUST.LOW;
+
 	public static int DARKNET_PORT_BASE = RealNodeRoutingTest.DARKNET_PORT_END;
 	public static final int DARKNET_PORT_END = DARKNET_PORT_BASE + NUMBER_OF_NODES;
 	
@@ -114,7 +118,7 @@ public class RealNodeSecretPingTest {
 			
 			try {
 				//Send the FNPStoreSecret message to the 'verify' node
-				verify.sendSync(DMT.createFNPStoreSecret(uid, secret), null);
+				verify.sendSync(DMT.createFNPStoreSecret(uid, secret), null, false);
 				
 				if (!getAck(source, verify, uid)) {
 					Logger.error(source, "did not get storesecret ack for "+uid);
@@ -123,7 +127,7 @@ public class RealNodeSecretPingTest {
 				}
 				
 				//Send the request for the secret through the 'pathway' node.
-				pathway.sendSync(DMT.createFNPSecretPing(uid, verify.getLocation(), PING_HTL, DAWN_HTL, 0, verify.getIdentity()), null);
+				pathway.sendSync(DMT.createFNPSecretPing(uid, verify.getLocation(), PING_HTL, DAWN_HTL, 0, verify.getIdentity()), null, false);
 				
 				long result=getSecretPingResponse(source, pathway, uid);
 				if (result!=secret) {
@@ -138,6 +142,9 @@ public class RealNodeSecretPingTest {
 				avg2.report(0.0);
 			} catch (DisconnectedException e) {
 				Logger.error(source, "huh?",e);
+				avg2.report(0.0);
+			} catch (SyncSendWaitedTooLongException e) {
+				Logger.error(source, "eh?", e);
 				avg2.report(0.0);
 			}
         }
@@ -208,8 +215,8 @@ public class RealNodeSecretPingTest {
 				for (int n = 0; n < DEGREE / 2; n++) {
 					if (Math.random() < p) {
 						try {
-							a.connect (b);
-							b.connect (a);
+							a.connect (b, trust);
+							b.connect (a, trust);
 						} catch (FSParseException e) {
 							Logger.error(RealNodeSecretPingTest.class, "cannot connect!!!!", e);
 						} catch (PeerParseException e) {

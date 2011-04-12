@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
 
 import com.db4o.ObjectContainer;
@@ -28,9 +29,9 @@ import freenet.client.Metadata.SimpleManifestComposer;
 import freenet.keys.FreenetURI;
 import freenet.osgi.compress.PaxFormatter;
 import freenet.support.Logger;
-import freenet.support.Logger.LogLevel;
 import freenet.support.api.Bucket;
 import freenet.support.io.BucketTools;
+import freenet.support.io.Closer;
 
 /**
  * Insert a bunch of files as single Archive with .metadata
@@ -79,6 +80,7 @@ public class ContainerInserter implements ClientPutState {
 	private final boolean dontCompress;
 	final byte[] forceCryptoKey;
 	final byte cryptoAlgorithm;
+	private final boolean realTimeFlag;
 
 	/**
 	 * Insert a bunch of files as single Archive with .metadata
@@ -107,7 +109,8 @@ public class ContainerInserter implements ClientPutState {
 			boolean freeData,
 			boolean earlyEncode2,
 			byte[] forceCryptoKey,
-			byte cryptoAlgorithm) {
+			byte cryptoAlgorithm,
+			boolean realTimeFlag) {
 		parent = parent2;
 		cb = cb2;
 		hashCode = super.hashCode();
@@ -124,6 +127,7 @@ public class ContainerInserter implements ClientPutState {
 		containerItems = new ArrayList<ContainerElement>();
 		this.forceCryptoKey = forceCryptoKey;
 		this.cryptoAlgorithm = cryptoAlgorithm;
+		this.realTimeFlag = realTimeFlag;
 	}
 
 	public void cancel(ObjectContainer container, ClientContext context) {
@@ -167,11 +171,18 @@ public class ContainerInserter implements ClientPutState {
 		}
 		
 		InsertBlock block;
+		OutputStream os = null;
 		try {
 			Bucket outputBucket = context.getBucketFactory(persistent).makeBucket(-1);
+			os = new BufferedOutputStream(outputBucket.getOutputStream());
 			String mimeType = (archiveType == ARCHIVE_TYPE.TAR ?
-				createTarBucket(outputBucket, container) :
-				createZipBucket(outputBucket, container));
+				createTarBucket(os, container) :
+				createZipBucket(os, container));
+			os.flush();
+			os.close();
+			os = null;
+			if(logMINOR)
+				Logger.minor(this, "Archive size is "+outputBucket.size());
 			
 			if(logMINOR) Logger.minor(this, "We are using "+archiveType);
 			
@@ -184,6 +195,8 @@ public class ContainerInserter implements ClientPutState {
 		} catch (IOException e) {
 			fail(new InsertException(InsertException.BUCKET_ERROR, e, null), container, context);
 			return;
+		} finally {
+			Closer.close(os);
 		}
 		
 		boolean dc = dontCompress;
@@ -192,7 +205,7 @@ public class ContainerInserter implements ClientPutState {
 		}
 		
 		// Treat it as a splitfile for purposes of determining reinsert count.
-		SingleFileInserter sfi = new SingleFileInserter(parent, cb, block, false, ctx, dc, getCHKOnly, reportMetadataOnly, token, archiveType, true, null, earlyEncode, true, persistent, 0, 0, null, cryptoAlgorithm, forceCryptoKey);
+		SingleFileInserter sfi = new SingleFileInserter(parent, cb, block, false, ctx, realTimeFlag, dc, getCHKOnly, reportMetadataOnly, token, archiveType, true, null, earlyEncode, true, persistent, 0, 0, null, cryptoAlgorithm, forceCryptoKey);
 		if(logMINOR)
 			Logger.minor(this, "Inserting container: "+sfi+" for "+this);
 		cb.onTransition(this, sfi, container);
@@ -214,41 +227,34 @@ public class ContainerInserter implements ClientPutState {
 
 		while(true) {
 			try {
-				bucket = context.tempBucketFactory.makeBucket(-1);
-				byte[] buf = md.writeToByteArray();
-				OutputStream os = bucket.getOutputStream();
-				os.write(buf);
-				os.close();
+				bucket = BucketTools.makeImmutableBucket(context.tempBucketFactory, md.writeToByteArray());
 				containerItems.add(new ContainerElement(bucket, ".metadata"));
-				return;
-			} catch (IOException e) {
-				fail(new InsertException(InsertException.INTERNAL_ERROR, e, null), container, context);
 				return;
 			} catch (MetadataUnresolvedException e) {
 				try {
-					x = resolve(e, x, bucket, null, null, container, context);
+					x = resolve(e, x, null, null, container, context);
 				} catch (IOException e1) {
 					fail(new InsertException(InsertException.INTERNAL_ERROR, e, null), container, context);
 					return;
 				}
+			} catch (IOException e) {
+				fail(new InsertException(InsertException.INTERNAL_ERROR, e, null), container, context);
+				return;
 			}
 		}
 		
 	}
 
-	private int resolve(MetadataUnresolvedException e, int x, Bucket bucket, FreenetURI key, String element2, ObjectContainer container, ClientContext context) throws IOException {
+	private int resolve(MetadataUnresolvedException e, int x, FreenetURI key, String element2, ObjectContainer container, ClientContext context) throws IOException {
 		Metadata[] m = e.mustResolve;
 		for(int i=0;i<m.length;i++) {
 			try {
-				byte[] buf = m[i].writeToByteArray();
-				OutputStream os = bucket.getOutputStream();
-				os.write(buf);
-				os.close();
+				Bucket bucket = BucketTools.makeImmutableBucket(context.tempBucketFactory, m[i].writeToByteArray());
 				String nameInArchive = ".metadata-"+(x++);
 				containerItems.add(new ContainerElement(bucket, nameInArchive));
 				m[i].resolve(nameInArchive);
 			} catch (MetadataUnresolvedException e1) {
-				x = resolve(e, x, bucket, key, element2, container, context);
+				x = resolve(e, x, key, element2, container, context);
 			}
 		}
 		return x;
@@ -286,37 +292,30 @@ public class ContainerInserter implements ClientPutState {
 			Logger.minor(this, "objectCanNew() on "+this, new Exception("debug"));
 		return true;
 	}
-	
 
-	
-	private String createTarBucket(Bucket outputBucket, @SuppressWarnings("unused") ObjectContainer container) throws IOException {
+	private String createTarBucket(OutputStream os, @SuppressWarnings("unused") ObjectContainer container) throws IOException {
 		if(logMINOR) Logger.minor(this, "Create a TAR Bucket");
 		
-		OutputStream os = new BufferedOutputStream(outputBucket.getOutputStream());
 		TarArchiveOutputStream tarOS = new TarArchiveOutputStream(os);
 		PaxFormatter pf = new PaxFormatter(tarOS);
+		TarArchiveEntry ze;
 
 		for(ContainerElement ph : containerItems) {
 			if(logMINOR)
 				Logger.minor(this, "Putting into tar: "+ph+" data length "+ph.data.size()+" name "+ph.targetInArchive);
 			pf.addItem(ph.targetInArchive, ph.data.getInputStream(), ph.data.size());
 		}
-
+		
 		// Both finish() and close() are necessary.
 		tarOS.finish();
-		tarOS.flush();
 		tarOS.close();
-		
-		if(logMINOR)
-			Logger.minor(this, "Archive size is "+outputBucket.size());
 		
 		return ARCHIVE_TYPE.TAR.mimeTypes[0];
 	}
 	
-	private String createZipBucket(Bucket outputBucket, @SuppressWarnings("unused") ObjectContainer container) throws IOException {
+	private String createZipBucket(OutputStream os, @SuppressWarnings("unused") ObjectContainer container) throws IOException {
 		if(logMINOR) Logger.minor(this, "Create a ZIP Bucket");
 		
-		OutputStream os = new BufferedOutputStream(outputBucket.getOutputStream());
 		ZipOutputStream zos = new ZipOutputStream(os);
 		ZipEntry ze;
 
@@ -327,12 +326,10 @@ public class ContainerInserter implements ClientPutState {
 			BucketTools.copyTo(ph.data, zos, ph.data.size());
 			zos.closeEntry();
 		}
-
+		
 		zos.closeEntry();
 		// Both finish() and close() are necessary.
 		zos.finish();
-		zos.flush();
-		zos.close();
 		
 		return ARCHIVE_TYPE.ZIP.mimeTypes[0];
 	}
@@ -348,7 +345,7 @@ public class ContainerInserter implements ClientPutState {
 				HashMap<String,Object> subMap = new HashMap<String,Object>();
 				//System.out.println("Decompose: "+name+" (SubDir)");
 				smc.addItem(name, makeManifest(hm, archivePrefix+name+ '/'));
-				if(Logger.shouldLog(LogLevel.DEBUG, this))
+				if(logDEBUG)
 					Logger.debug(this, "Sub map for "+name+" : "+subMap.size()+" elements from "+hm.size());
 			} else if (o instanceof Metadata) {
 				//already Metadata, take it as is

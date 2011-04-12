@@ -172,6 +172,9 @@ public class LongTermManySingleBlocksTest {
 	private static final int INSERTED_BLOCKS = 32;
 
 	private static final DateFormat dateFormat = new SimpleDateFormat("yyyy.MM.dd", Locale.US);
+	static {
+		dateFormat.setTimeZone(TimeZone.getTimeZone("GMT"));
+	}
 	private static final GregorianCalendar today = (GregorianCalendar) Calendar.getInstance(TimeZone.getTimeZone("GMT"));
 
 	public static void main(String[] args) {
@@ -288,6 +291,10 @@ public class LongTermManySingleBlocksTest {
 				public void removeFrom(ObjectContainer container) {
 					// Ignore.
 				}
+
+				public boolean realTimeFlag() {
+					return false;
+				}
 				
 			};
 			
@@ -314,6 +321,7 @@ public class LongTermManySingleBlocksTest {
 			int[] totalSuccessfulFetchesByDelta = new int[MAX_N+1];
 			long[] totalFetchTimeByDelta = new long[MAX_N+1];
 			
+loopOverLines:
 			while((line = br.readLine()) != null) {
 				
 				singleURI = null;
@@ -321,7 +329,7 @@ public class LongTermManySingleBlocksTest {
 				//System.out.println("LINE: "+line);
 				String[] split = line.split("!");
 				Date date = dateFormat.parse(split[0]);
-				GregorianCalendar calendar = new GregorianCalendar();
+				GregorianCalendar calendar = new GregorianCalendar(TimeZone.getTimeZone("GMT"));
 				calendar.setTime(date);
 				System.out.println("Date: "+dateFormat.format(calendar.getTime()));
 				calendar.set(Calendar.HOUR_OF_DAY, 0);
@@ -354,7 +362,7 @@ public class LongTermManySingleBlocksTest {
 					System.out.println("Key insert "+i+" : "+insertedURIs[i]+" in "+insertTimes[i]);
 				}
 				for(int i=0;i<targets.length;i++) {
-					if(targets[i].getTimeInMillis() == calendar.getTimeInMillis()) {
+					if(Math.abs(targets[i].getTimeInMillis() - calendar.getTimeInMillis()) < 12*60*60*1000) {
 						System.out.println("Found row for target date "+((1<<i)-1)+" days ago.");
 						System.out.println("Version: "+split[1]);
 						csvLine.add(Integer.toString(i));
@@ -362,7 +370,7 @@ public class LongTermManySingleBlocksTest {
 						int inserted = 0;
 						for(int j=0;j<INSERTED_BLOCKS;j++) {
 							if(insertedURIs[j] == null) {
-								csvLine.add("");
+								csvLine.add("INSERT FAILED");
 								continue;
 							}
 							inserted++;
@@ -389,7 +397,15 @@ public class LongTermManySingleBlocksTest {
 				}
 				
 				while(split.length > token + INSERTED_BLOCKS) {
-					int delta = Integer.parseInt(split[token]);
+					int delta;
+					try {
+						delta = Integer.parseInt(split[token]);
+					} catch (NumberFormatException e) {
+						System.err.println("Unable to parse token "+token+" = \""+token+"\"");
+						System.err.println("This is supposed to be a delta");
+						System.err.println("Skipping the rest of the line for date "+dateFormat.format(calendar.getTime()));
+						continue loopOverLines;
+					}
 					System.out.println("Delta: "+((1<<delta)-1)+" days");
 					token++;
 					int totalFetchTime = 0;
@@ -457,6 +473,7 @@ public class LongTermManySingleBlocksTest {
 				exitCode = EXIT_THREW_SOMETHING;
 			}
 			
+			System.out.println("Exiting with status "+exitCode);
 			System.exit(exitCode);
 		}
 	}	

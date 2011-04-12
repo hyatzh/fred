@@ -3,11 +3,17 @@
  * http://www.gnu.org/ for further details of the GPL. */
 package freenet.client.async;
 
-import com.db4o.ObjectContainer;
+import org.tanukisoftware.wrapper.WrapperManager;
 
+import com.db4o.ObjectContainer;
+import com.db4o.ObjectSet;
+
+import freenet.client.FetchContext;
 import freenet.keys.FreenetURI;
 import freenet.node.RequestClient;
 import freenet.node.SendableRequest;
+import freenet.node.useralerts.SimpleUserAlert;
+import freenet.node.useralerts.UserAlert;
 import freenet.support.Logger;
 import freenet.support.Logger.LogLevel;
 
@@ -29,12 +35,14 @@ public abstract class ClientRequester {
 	// FIXME move the priority classes from RequestStarter here
 	/** Priority class of the request or insert. */
 	protected short priorityClass;
+	/** Whether this is a real-time request */
+	protected final boolean realTimeFlag;
 	/** Has the request or insert been cancelled? */
 	protected boolean cancelled;
 	/** The RequestClient, used to determine whether this request is 
 	 * persistent, and also we round-robin between different RequestClient's
 	 * in scheduling within a given priority class and retry count. */
-	protected final RequestClient client;
+	protected RequestClient client;
 	/** The set of queued low-level requests or inserts for this request or
 	 * insert. */
 	protected final SendableRequestSet requests;
@@ -51,11 +59,13 @@ public abstract class ClientRequester {
 		requests = null;
 		hashCode = 0;
 		client = null;
+		realTimeFlag = false;
 	}
 
 	protected ClientRequester(short priorityClass, RequestClient client) {
 		this.priorityClass = priorityClass;
 		this.client = client;
+		this.realTimeFlag = client.realTimeFlag();
 		if(client == null)
 			throw new NullPointerException();
 		hashCode = super.hashCode(); // the old object id will do fine, as long as we ensure it doesn't change!
@@ -122,6 +132,16 @@ public abstract class ClientRequester {
 	 * Requests can be satisfied entirely from the datastore sometimes. */
 	protected boolean sentToNetwork;
 
+	protected synchronized void resetBlocks() {
+		totalBlocks = 0;
+		successfulBlocks = 0;
+		failedBlocks = 0;
+		fatallyFailedBlocks = 0;
+		minSuccessBlocks = 0;
+		blockSetFinalized = false;
+		sentToNetwork = false;
+	}
+	
 	/** The set of blocks has been finalised, total will not change any
 	 * more. Notify clients.
 	 * @param container The database. Must be non-null if the request or 
@@ -187,9 +207,56 @@ public abstract class ClientRequester {
 			if(cancelled) return;
 			successfulBlocks++;
 		}
+		if(checkForBrokenClient(container, context)) return;
 		if(persistent()) container.store(this);
 		if(dontNotify) return;
 		notifyClients(container, context);
+	}
+	
+	transient static final UserAlert brokenClientAlert = new SimpleUserAlert(true, "Some broken downloads/uploads were cancelled. Please restart them.", "Some downloads/uploads were broken due to a bug (some time before 1287) causing unrecoverable database corruption. They have been cancelled. Please restart them from the Downloads or Uploads page.", "Some downloads/uploads were broken due to a pre-1287 bug, please restart them.", UserAlert.ERROR);
+
+	public boolean checkForBrokenClient(ObjectContainer container,
+			ClientContext context) {
+		if(container != null && client == null) {
+			if(container.ext().isStored(this) && container.ext().isActive(this)) {
+				// Data corruption?!?!?
+				// Obviously broken, possibly associated with a busted FCPClient.
+				// Lets fail it.
+				Logger.error(this, "Stored and active "+this+" but client is null!");
+				if(!isFinished()) {
+					context.postUserAlert(brokenClientAlert);
+					System.err.println("Cancelling download/upload because of bug causing database corruption. The bug has been fixed but the download/upload will be cancelled. You can restart it.");
+				}
+				// REDFLAG this leaks a RequestClient. IMHO this is better than the alternative.
+				this.client = new RequestClient() {
+
+					public boolean persistent() {
+						return true;
+					}
+
+					public void removeFrom(ObjectContainer container) {
+						container.delete(this);
+					}
+
+					public boolean realTimeFlag() {
+						return realTimeFlag;
+					}
+					
+				};
+				container.store(client);
+				container.store(this);
+				if(!isFinished()) {
+					cancel(container, context);
+				}
+				return true;
+			} else if(container.ext().isStored(this) && !container.ext().isActive(this)) {
+				// Definitely a bug, hopefully a simple one.
+				Logger.error(this, "Not active in completedBlock on "+this, new Exception("error"));
+				return true;
+			} else
+				throw new IllegalStateException("Client is null on persistent request "+this);
+		}
+		return false;
 	}
 
 	/** A block failed. Count it and notify our clients. */
@@ -245,6 +312,17 @@ public abstract class ClientRequester {
 	 * checking the datastore for at least one part of the request. */
 	protected abstract void innerToNetwork(ObjectContainer container, ClientContext context);
 
+	protected void clearCountersOnRestart() {
+		this.blockSetFinalized = false;
+		this.cancelled = false;
+		this.failedBlocks = 0;
+		this.fatallyFailedBlocks = 0;
+		this.minSuccessBlocks = 0;
+		this.sentToNetwork = false;
+		this.successfulBlocks = 0;
+		this.totalBlocks = 0;
+	}
+
 	/** Get client context object */
 	public RequestClient getClient() {
 		return client;
@@ -263,11 +341,15 @@ public abstract class ClientRequester {
 			this.priorityClass = newPriorityClass;
 		}
 		if(logMINOR) Logger.minor(this, "Changing priority class of "+this+" from "+oldPrio+" to "+newPriorityClass);
-		ctx.getChkFetchScheduler().reregisterAll(this, container, oldPrio);
-		ctx.getChkInsertScheduler().reregisterAll(this, container, oldPrio);
-		ctx.getSskFetchScheduler().reregisterAll(this, container, oldPrio);
-		ctx.getSskInsertScheduler().reregisterAll(this, container, oldPrio);
+		ctx.getChkFetchScheduler(realTimeFlag).reregisterAll(this, container, oldPrio);
+		ctx.getChkInsertScheduler(realTimeFlag).reregisterAll(this, container, oldPrio);
+		ctx.getSskFetchScheduler(realTimeFlag).reregisterAll(this, container, oldPrio);
+		ctx.getSskInsertScheduler(realTimeFlag).reregisterAll(this, container, oldPrio);
 		if(persistent()) container.store(this);
+	}
+
+	public boolean realTimeFlag() {
+		return realTimeFlag;
 	}
 
 	/** Is this request persistent? */
@@ -286,6 +368,18 @@ public abstract class ClientRequester {
 	 * persistent! */
 	public void objectOnActivate(ObjectContainer container) {
 		container.activate(client, 1);
+	}
+	
+	public boolean objectCanNew(ObjectContainer container) {
+		if(client == null)
+			throw new NullPointerException();
+		return true;
+	}
+
+	public boolean objectCanUpdate(ObjectContainer container) {
+		if(client == null)
+			throw new NullPointerException();
+		return true;
 	}
 
 	/** Add a low-level request to the list of requests belonging to this high-level request (request here
@@ -320,6 +414,31 @@ public abstract class ClientRequester {
 		}
 		if(persistent())
 			container.deactivate(requests, 1);
+	}
+
+	/** FIXME get rid. */
+	public static void checkAll(ObjectContainer container,
+			ClientContext clientContext) {
+		ObjectSet<ClientRequester> requesters = container.query(ClientRequester.class);
+		for(ClientRequester req : requesters) {
+			try {
+				System.out.println("Checking "+req);
+				if(req.isCancelled() || req.isFinished()) {
+					System.out.println("Cancelled or finished");
+				} else {
+					System.out.println("Checking for broken client: "+req);
+					if(!req.checkForBrokenClient(container, clientContext))
+						System.out.println("Request is clean.");
+					else {
+						WrapperManager.signalStarting(5*60*1000);
+						container.commit();
+					}
+				}
+			} catch (Throwable t) {
+				Logger.error(ClientRequester.class, "Caught error while checking on startup", t);
+			}
+			container.deactivate(req, 1);
+		}
 	}
 
 }

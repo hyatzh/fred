@@ -44,8 +44,14 @@ public class NodeStarter implements WrapperListener {
 	(File.separatorChar == '\\') &&
 	(System.getProperty("os.arch").toLowerCase().matches("(i?[x0-9]86_64|amd64)")) ? 6 : 2;
 	 */
-	public static int extBuildNumber;
-	public static String extRevisionNumber;
+	public static final int extBuildNumber;
+	public static final String extRevisionNumber;
+	
+	static {
+		extBuildNumber = ExtVersion.extBuildNumber();
+		extRevisionNumber = ExtVersion.extRevisionNumber();
+	}
+
 	private FreenetFilePersistentConfig cfg;
 
 	// experimental osgi support
@@ -82,7 +88,9 @@ public class NodeStarter implements WrapperListener {
 			return Integer.valueOf(-1);
 		}
 
-		getExtBuild();
+		String builtWithMessage = "freenet.jar built with freenet-ext.jar Build #" + ExtVersion.buildNumber + " r" + ExtVersion.cvsRevision+" running with ext build "+extBuildNumber+" r" + extRevisionNumber;
+		Logger.normal(this, builtWithMessage);
+		System.out.println(builtWithMessage);
 
 		File configFilename;
 		if(args.length == 0) {
@@ -171,40 +179,6 @@ public class NodeStarter implements WrapperListener {
 		}
 
 		return null;
-	}
-
-	private void getExtBuild() {
-		try {
-			extBuildNumber = ExtVersion.buildNumber;
-			extRevisionNumber = ExtVersion.cvsRevision;
-			String builtWithMessage = "freenet.jar built with freenet-ext.jar Build #" + extBuildNumber + " r" + extRevisionNumber;
-			Logger.normal(this, builtWithMessage);
-			System.out.println(builtWithMessage);
-			extBuildNumber = ExtVersion.buildNumber();
-			if(extBuildNumber == -42) {
-				extBuildNumber = ExtVersion.extBuildNumber();
-				extRevisionNumber = ExtVersion.extRevisionNumber();
-			}
-			if(extBuildNumber == 0) {
-				String buildMessage = "extBuildNumber is 0; perhaps your freenet-ext.jar file is corrupted?";
-				Logger.error(this, buildMessage);
-				System.err.println(buildMessage);
-				extBuildNumber = -1;
-			}
-			if(extRevisionNumber == null) {
-				String revisionMessage = "extRevisionNumber is null; perhaps your freenet-ext.jar file is corrupted?";
-				Logger.error(this, revisionMessage);
-				System.err.println(revisionMessage);
-				extRevisionNumber = "INVALID";
-			}
-		} catch(Throwable t) {
-			// Compatibility code ... will be removed
-			Logger.error(this, "Unable to get the version of your freenet-ext file : it's probably corrupted!");
-			System.err.println("Unable to get the version of your freenet-ext file : it's probably corrupted!");
-			System.err.println(t.getMessage());
-			extRevisionNumber = "INVALID";
-			extBuildNumber = -1;
-		}
 	}
 
 	/**
@@ -329,7 +303,6 @@ public class NodeStarter implements WrapperListener {
 			plug.start();
 		}
 
-		FNPPacketMangler.LOG_UNMATCHABLE_ERROR = true;
 		DNSRequester.DISABLE = noDNS;
 
 		return random;

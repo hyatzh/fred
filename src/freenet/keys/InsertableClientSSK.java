@@ -9,7 +9,7 @@ import java.security.MessageDigest;
 
 import net.i2p.util.NativeBigInteger;
 
-import org.spaceroots.mantissa.random.MersenneTwister;
+import freenet.support.math.MersenneTwister;
 
 import com.db4o.ObjectContainer;
 
@@ -125,8 +125,7 @@ public class InsertableClientSSK extends ClientSSK {
 			// Encrypt data. Data encryption key = H(plaintext data).
 
 			aes.initialize(origDataHash);
-			PCFBMode pcfb = PCFBMode.create(aes);
-			pcfb.reset(origDataHash);
+			PCFBMode pcfb = PCFBMode.create(aes, origDataHash);
 
 			pcfb.blockEncipher(data, 0, data.length);
 

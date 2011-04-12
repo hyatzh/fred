@@ -31,6 +31,7 @@ import freenet.io.xfer.BulkTransmitter;
 import freenet.io.xfer.PartiallyReceivedBulk;
 import freenet.keys.FreenetURI;
 import freenet.l10n.NodeL10n;
+import freenet.node.DarknetPeerNode.FRIEND_TRUST;
 import freenet.node.useralerts.AbstractUserAlert;
 import freenet.node.useralerts.BookmarkFeedUserAlert;
 import freenet.node.useralerts.DownloadFeedUserAlert;
@@ -44,6 +45,9 @@ import freenet.support.Logger;
 import freenet.support.SimpleFieldSet;
 import freenet.support.SizeUtil;
 import freenet.support.Logger.LogLevel;
+import freenet.support.api.HTTPUploadedFile;
+import freenet.support.io.BucketTools;
+import freenet.support.io.ByteArrayRandomAccessThing;
 import freenet.support.io.FileUtil;
 import freenet.support.io.RandomAccessFileWrapper;
 import freenet.support.io.RandomAccessThing;
@@ -83,15 +87,32 @@ public class DarknetPeerNode extends PeerNode {
 	
 	/** Queued-to-send N2NM extra peer data file numbers */
 	private LinkedHashSet<Integer> queuedToSendN2NMExtraPeerDataFileNumbers;
+	
+	private FRIEND_TRUST trustLevel;
 
 	private static boolean logMINOR;
+	
+	public enum FRIEND_TRUST {
+		LOW,
+		NORMAL,
+		HIGH;
+		
+		public static FRIEND_TRUST[] valuesBackwards() {
+			FRIEND_TRUST[] valuesBackwards = new FRIEND_TRUST[values().length];
+			for(int i=0;i<values().length;i++)
+				valuesBackwards[i] = values()[values().length-i-1];
+			return valuesBackwards;
+		}
+
+	}
 	
 	/**
 	 * Create a darknet PeerNode from a SimpleFieldSet
 	 * @param fs The SimpleFieldSet to parse
 	 * @param node2 The running Node we are part of.
+	 * @param trust If this is a new node, we will use this parameter to set the initial trust level.
 	 */
-	public DarknetPeerNode(SimpleFieldSet fs, Node node2, NodeCrypto crypto, PeerManager peers, boolean fromLocal, OutgoingPacketMangler mangler) throws FSParseException, PeerParseException, ReferenceSignatureVerificationException {
+	public DarknetPeerNode(SimpleFieldSet fs, Node node2, NodeCrypto crypto, PeerManager peers, boolean fromLocal, OutgoingPacketMangler mangler, FRIEND_TRUST trust) throws FSParseException, PeerParseException, ReferenceSignatureVerificationException {
 		super(fs, node2, crypto, peers, fromLocal, false, mangler, false);
 		
 		logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
@@ -109,6 +130,16 @@ public class DarknetPeerNode extends PeerNode {
 			disableRouting = disableRoutingHasBeenSetLocally = Fields.stringToBool(metadata.get("disableRoutingHasBeenSetLocally"), false);
 			ignoreSourcePort = Fields.stringToBool(metadata.get("ignoreSourcePort"), false);
 			allowLocalAddresses = Fields.stringToBool(metadata.get("allowLocalAddresses"), false);
+			String s = metadata.get("trustLevel");
+			if(s != null) {
+				trustLevel = FRIEND_TRUST.valueOf(s);
+			} else {
+				trustLevel = node.securityLevels.getDefaultFriendTrust();
+				System.err.println("Assuming friend ("+name+") trust is opposite of friend seclevel: "+trustLevel);
+			}
+		} else {
+			if(trust == null) throw new IllegalArgumentException();
+			trustLevel = trust;
 		}
 	
 		// Setup the private darknet comment note
@@ -191,8 +222,10 @@ public class DarknetPeerNode extends PeerNode {
 			fs.putSingle("ignoreSourcePort", "true");
 		if(allowLocalAddresses)
 			fs.putSingle("allowLocalAddresses", "true");
-	if(disableRoutingHasBeenSetLocally)
-		fs.putSingle("disableRoutingHasBeenSetLocally", "true");
+		if(disableRoutingHasBeenSetLocally)
+			fs.putSingle("disableRoutingHasBeenSetLocally", "true");
+		fs.putSingle("trustLevel", trustLevel.name());
+
 		return fs;
 	}
 
@@ -201,11 +234,11 @@ public class DarknetPeerNode extends PeerNode {
 	}
 
 	@Override
-	protected synchronized int getPeerNodeStatus(long now, long backedOffUntil) {
+	protected synchronized int getPeerNodeStatus(long now, long backedOffUntilRT, long backedOffUntilBulk, boolean overPingThreshold) {
 		if(isDisabled) {
 			return PeerManager.PEER_NODE_STATUS_DISABLED;
 		}
-		int status = super.getPeerNodeStatus(now, backedOffUntil);
+		int status = super.getPeerNodeStatus(now, backedOffUntilRT, backedOffUntilBulk, overPingThreshold);
 		if(status == PeerManager.PEER_NODE_STATUS_CONNECTED ||
 				status == PeerManager.PEER_NODE_STATUS_CLOCK_PROBLEM ||
 				status == PeerManager.PEER_NODE_STATUS_ROUTING_BACKED_OFF ||
@@ -909,7 +942,7 @@ public class DarknetPeerNode extends PeerNode {
 
 		public void send() throws DisconnectedException {
 			prb = new PartiallyReceivedBulk(node.usm, size, Node.PACKET_SIZE, data, true);
-			transmitter = new BulkTransmitter(prb, DarknetPeerNode.this, uid, false, node.nodeStats.nodeToNodeCounter);
+			transmitter = new BulkTransmitter(prb, DarknetPeerNode.this, uid, false, node.nodeStats.nodeToNodeCounter, false);
 			if(logMINOR)
 				Logger.minor(this, "Sending "+uid);
 			node.executor.execute(new Runnable() {
@@ -1345,18 +1378,14 @@ public class DarknetPeerNode extends PeerNode {
 		return getPeerNodeStatus();
 	}
 
-	public int sendFileOffer(File filename, String message) throws IOException {
-		long now = System.currentTimeMillis();
+	private int sendFileOffer(String fnam, String mime, String message, RandomAccessThing data) throws IOException {
 		long uid = node.random.nextLong();
-		String fnam = filename.getName();
-		String mime = DefaultMIMETypes.guessMIMEType(fnam, false);
-		RandomAccessThing data = new RandomAccessFileWrapper(filename, "r");
+		long now = System.currentTimeMillis();
 		FileOffer fo = new FileOffer(uid, data, fnam, mime, message);
 		synchronized(this) {
 			myFileOffersByUID.put(uid, fo);
 		}
 		storeOffers();
-
 		SimpleFieldSet fs = new SimpleFieldSet(true);
 		fo.toFieldSet(fs);
 		if(logMINOR)
@@ -1366,6 +1395,20 @@ public class DarknetPeerNode extends PeerNode {
 		sendNodeToNodeMessage(fs, Node.N2N_MESSAGE_TYPE_FPROXY, true, now, true);
 		setPeerNodeStatus(System.currentTimeMillis());
 		return getPeerNodeStatus();
+	}
+	
+	public int sendFileOffer(File file, String message) throws IOException {
+		String fnam = file.getName();
+		String mime = DefaultMIMETypes.guessMIMEType(fnam, false);
+		RandomAccessThing data = new RandomAccessFileWrapper(file, "r");
+		return sendFileOffer(fnam, mime, message, data);
+	}
+	
+	public int sendFileOffer(HTTPUploadedFile file, String message) throws IOException {
+		String fnam = file.getFilename();
+		String mime = file.getContentType();
+		RandomAccessThing data = new ByteArrayRandomAccessThing(BucketTools.toByteArray(file.getData()));
+		return sendFileOffer(fnam, mime, message, data);
 	}
 
 	public void handleFproxyN2NTM(SimpleFieldSet fs, int fileNumber) {
@@ -1413,6 +1456,10 @@ public class DarknetPeerNode extends PeerNode {
 		synchronized(this) {
 			fo = hisFileOffersByUID.get(id);
 		}
+		if(fo == null) {
+			Logger.error(this, "Cannot accept transfer "+id+" - does not exist");
+			return;
+		}
 		fo.accept();
 	}
 	
@@ -1420,6 +1467,10 @@ public class DarknetPeerNode extends PeerNode {
 		FileOffer fo;
 		synchronized(this) {
 			fo = hisFileOffersByUID.remove(id);
+		}
+		if(fo == null) {
+			Logger.error(this, "Cannot accept transfer "+id+" - does not exist");
+			return;
 		}
 		fo.reject();
 	}
@@ -1605,5 +1656,34 @@ public class DarknetPeerNode extends PeerNode {
 			peerAddedTime = 0;
 		if(!neverConnected)
 			peerAddedTime = 0;
+	}
+
+	// FIXME find a better solution???
+	@Override
+	public void fatalTimeout() {
+		if(node.isStopping()) return;
+		Logger.error(this, "Disconnecting from darknet node "+this+" because of fatal timeout", new Exception("error"));
+		System.err.println("Your friend node \""+getName()+"\" ("+getPeer()+" version "+getVersion()+") is having severe problems. We have disconnected to try to limit the effect on us. It will reconnect soon.");
+		// FIXME post a useralert
+		// Disconnect.
+		forceDisconnect(true);
+	}
+
+	public synchronized FRIEND_TRUST getTrustLevel() {
+		return trustLevel;
+	}
+
+	@Override
+	public boolean shallWeRouteAccordingToOurPeersLocation() {
+		if(!node.shallWeRouteAccordingToOurPeersLocation()) return false; // Globally disabled
+		if(trustLevel == FRIEND_TRUST.LOW) return false;
+		return true;
+	}
+
+	public void setTrustLevel(FRIEND_TRUST trust) {
+		synchronized(this) {
+			trustLevel = trust;
+		}
+		node.peers.writePeers();
 	}
 }

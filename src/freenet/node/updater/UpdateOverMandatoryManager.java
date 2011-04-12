@@ -22,6 +22,7 @@ import com.db4o.ObjectContainer;
 import freenet.client.FetchContext;
 import freenet.client.FetchException;
 import freenet.client.FetchResult;
+import freenet.client.InsertContext;
 import freenet.client.InsertException;
 import freenet.client.async.BaseClientPutter;
 import freenet.client.async.BinaryBlob;
@@ -420,8 +421,10 @@ public class UpdateOverMandatoryManager implements RequestClient {
 		String lname = isExt ? "ext" : "main";
 		if(logMINOR)
 			Logger.minor(this, "sendUOMRequest"+name+"(" + source + "," + addOnFail + ")");
-		if(!source.isConnected())
-			return;
+		if(!source.isConnected() || source.isSeed()) {
+                    if(logMINOR) Logger.minor(this, "Not sending UOM "+lname+" request to "+source+" (disconnected or seednode)");
+                    return;
+                }
 		final HashSet<PeerNode> sendingJar = isExt ? nodesSendingExtJar : nodesSendingMainJar;
 		final HashSet<PeerNode> askedSendJar = isExt ? nodesAskedSendExtJar : nodesAskedSendMainJar;
 		synchronized(this) {
@@ -496,7 +499,7 @@ public class UpdateOverMandatoryManager implements RequestClient {
 
 				public void sent() {
 					// Timeout...
-					updateManager.node.ps.queueTimedJob(new Runnable() {
+					updateManager.node.ticker.queueTimedJob(new Runnable() {
 
 						public void run() {
 							synchronized(UpdateOverMandatoryManager.this) {
@@ -773,7 +776,7 @@ public class UpdateOverMandatoryManager implements RequestClient {
 
 		final BulkTransmitter bt;
 		try {
-			bt = new BulkTransmitter(prb, source, uid, false, updateManager.ctr);
+			bt = new BulkTransmitter(prb, source, uid, false, updateManager.ctr, true);
 		} catch(DisconnectedException e) {
 			Logger.error(this, "Peer " + source + " asked us for the blob file for the revocation key, then disconnected: " + e, e);
 			raf.close();
@@ -1159,9 +1162,10 @@ public class UpdateOverMandatoryManager implements RequestClient {
 		};
 		FileBucket bucket = new FileBucket(blob, true, false, false, false, false);
 		// We are inserting a binary blob so we don't need to worry about CompatibilityMode etc.
+		InsertContext ctx = updateManager.node.clientCore.makeClient(RequestStarter.INTERACTIVE_PRIORITY_CLASS).getInsertContext(true);
 		ClientPutter putter = new ClientPutter(callback, bucket,
-			FreenetURI.EMPTY_CHK_URI, null, updateManager.node.clientCore.makeClient(RequestStarter.INTERACTIVE_PRIORITY_CLASS).getInsertContext(true),
-			RequestStarter.INTERACTIVE_PRIORITY_CLASS, false, false, this, null, null, true, updateManager.node.clientCore.clientContext, null);
+			FreenetURI.EMPTY_CHK_URI, null, ctx,
+			RequestStarter.INTERACTIVE_PRIORITY_CLASS, false, false, this, null, true, updateManager.node.clientCore.clientContext, null);
 		try {
 			updateManager.node.clientCore.clientContext.start(putter, false);
 		} catch(InsertException e1) {
@@ -1184,65 +1188,92 @@ public class UpdateOverMandatoryManager implements RequestClient {
 		updateManager.node.clientCore.alerts.unregister(alert);
 	}
 
-	public boolean handleRequestJar(Message m, final PeerNode source, boolean isExt) {
+	public void handleRequestJar(Message m, final PeerNode source, final boolean isExt) {
+		final String name = isExt ? "ext" : "main";
+		
+		Message msg;
+		final BulkTransmitter bt;
+		final RandomAccessFileWrapper raf;
+
+		if (source.isOpennet() && updateManager.isSeednode()) {
+			Logger.normal(this, "Peer " + source
+					+ " asked us for the blob file for " + name
+					+ "; We are a seenode, so we ignore it!");
+			return;
+		}
 		// Do we have the data?
 
 		int version = isExt ? updateManager.newExtJarVersion() : updateManager.newMainJarVersion();
 		File data = isExt ? updateManager.getExtBlob(version) : updateManager.getMainBlob(version);
-		
-		final String name = isExt ? "ext" : "main";
 
 		if(data == null) {
 			Logger.normal(this, "Peer " + source + " asked us for the blob file for the "+name+" jar but we don't have it!");
 			// Probably a race condition on reconnect, hopefully we'll be asked again
-			return true;
+			return;
 		}
 
 		final long uid = m.getLong(DMT.UID);
 
-		final RandomAccessFileWrapper raf;
-		try {
-			raf = new RandomAccessFileWrapper(data, "r");
-		} catch(FileNotFoundException e) {
-			Logger.error(this, "Peer " + source + " asked us for the blob file for the "+name+" jar, we have downloaded it but don't have the file even though we did have it when we checked!: " + e, e);
-			return true;
+		if(!source.sendingUOMJar(isExt)) {
+			Logger.error(this, "Peer "+source+" asked for UOM "+(isExt?"ext":"main")+" jar twice");
+			return;
 		}
-
-		final PartiallyReceivedBulk prb;
-		long length;
+		
 		try {
-			length = raf.size();
-			prb = new PartiallyReceivedBulk(updateManager.node.getUSM(), length,
-				Node.PACKET_SIZE, raf, true);
-		} catch(IOException e) {
-			Logger.error(this, "Peer " + source + " asked us for the blob file for the "+name+" jar, we have downloaded it but we can't determine the file size: " + e, e);
-			raf.close();
-			return true;
+			
+			try {
+				raf = new RandomAccessFileWrapper(data, "r");
+			} catch(FileNotFoundException e) {
+				Logger.error(this, "Peer " + source + " asked us for the blob file for the "+name+" jar, we have downloaded it but don't have the file even though we did have it when we checked!: " + e, e);
+				return;
+			}
+			
+			final PartiallyReceivedBulk prb;
+			long length;
+			try {
+				length = raf.size();
+				prb = new PartiallyReceivedBulk(updateManager.node.getUSM(), length,
+						Node.PACKET_SIZE, raf, true);
+			} catch(IOException e) {
+				Logger.error(this, "Peer " + source + " asked us for the blob file for the "+name+" jar, we have downloaded it but we can't determine the file size: " + e, e);
+				raf.close();
+				return;
+			}
+			
+			try {
+				bt = new BulkTransmitter(prb, source, uid, false, updateManager.ctr, true);
+			} catch(DisconnectedException e) {
+				Logger.error(this, "Peer " + source + " asked us for the blob file for the "+name+" jar, then disconnected: " + e, e);
+				raf.close();
+				return;
+			}
+			
+			msg =
+				isExt ? DMT.createUOMSendingExtra(uid, length, updateManager.extURI.toString(), version) :
+					DMT.createUOMSendingMain(uid, length, updateManager.updateURI.toString(), version);
+			
+		} catch (RuntimeException e) {
+			source.finishedSendingUOMJar(isExt);
+			throw e;
+		} catch (Error e) {
+			source.finishedSendingUOMJar(isExt);
+			throw e;
 		}
-
-		final BulkTransmitter bt;
-		try {
-			bt = new BulkTransmitter(prb, source, uid, false, updateManager.ctr);
-		} catch(DisconnectedException e) {
-			Logger.error(this, "Peer " + source + " asked us for the blob file for the "+name+" jar, then disconnected: " + e, e);
-			raf.close();
-			return true;
-		}
-
+		
 		final Runnable r = new Runnable() {
 
 			public void run() {
-				if(!bt.send())
-					Logger.error(this, "Failed to send "+name+" jar blob to " + source.userToString() + " : " + bt.getCancelReason());
-				else
-					Logger.normal(this, "Sent "+name+" jar blob to " + source.userToString());
-				raf.close();
+				try {
+					if(!bt.send())
+						Logger.error(this, "Failed to send "+name+" jar blob to " + source.userToString() + " : " + bt.getCancelReason());
+					else
+						Logger.normal(this, "Sent "+name+" jar blob to " + source.userToString());
+					raf.close();
+				} finally {
+					source.finishedSendingUOMJar(isExt);
+				}
 			}
 		};
-
-		Message msg =
-			isExt ? DMT.createUOMSendingExtra(uid, length, updateManager.extURI.toString(), version) :
-				DMT.createUOMSendingMain(uid, length, updateManager.updateURI.toString(), version);
 
 		try {
 			source.sendAsync(msg, new AsyncMessageCallback() {
@@ -1258,11 +1289,13 @@ public class UpdateOverMandatoryManager implements RequestClient {
 				public void disconnected() {
 					// Argh
 					Logger.error(this, "Peer " + source + " asked us for the blob file for the "+name+" jar, then disconnected when we tried to send the UOMSendingMain");
+					source.finishedSendingUOMJar(isExt);
 				}
 
 				public void fatalError() {
 					// Argh
 					Logger.error(this, "Peer " + source + " asked us for the blob file for the "+name+" jar, then got a fatal error when we tried to send the UOMSendingMain");
+					source.finishedSendingUOMJar(isExt);
 				}
 
 				public void sent() {
@@ -1277,12 +1310,15 @@ public class UpdateOverMandatoryManager implements RequestClient {
 			}, updateManager.ctr);
 		} catch(NotConnectedException e) {
 			Logger.error(this, "Peer " + source + " asked us for the blob file for the "+name+" jar, then disconnected when we tried to send the UOMSendingExt: " + e, e);
-			return true;
+			return;
+		} catch (RuntimeException e) {
+			source.finishedSendingUOMJar(isExt);
+			throw e;
+		} catch (Error e) {
+			source.finishedSendingUOMJar(isExt);
+			throw e;
 		}
 
-		return true;
-		
-		
 	}
 	
 	public boolean handleSendingMain(Message m, final PeerNode source) {
@@ -1814,5 +1850,15 @@ public class UpdateOverMandatoryManager implements RequestClient {
 			nodesSendingExtJar.remove(pn);
 		}
 		maybeNotRevoked();
+	}
+
+	public boolean fetchingFromTwo() {
+		synchronized(this) {
+			return (this.nodesSendingMainJar.size() + this.nodesSendingExtJar.size()) >= 2;
+		}
+	}
+
+	public boolean realTimeFlag() {
+		return false;
 	}
 }

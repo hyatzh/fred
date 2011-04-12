@@ -26,6 +26,7 @@ import java.io.UnsupportedEncodingException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.text.DecimalFormat;
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -39,7 +40,7 @@ import java.util.Set;
 import java.util.TimeZone;
 import java.util.Vector;
 
-import org.spaceroots.mantissa.random.MersenneTwister;
+import freenet.support.math.MersenneTwister;
 import org.tanukisoftware.wrapper.WrapperManager;
 
 import com.db4o.Db4o;
@@ -110,6 +111,7 @@ import freenet.keys.SSKBlock;
 import freenet.keys.SSKVerifyException;
 import freenet.l10n.BaseL10n;
 import freenet.l10n.NodeL10n;
+import freenet.node.DarknetPeerNode.FRIEND_TRUST;
 import freenet.node.NodeDispatcher.NodeDispatcherCallback;
 import freenet.node.OpennetManager.ConnectionType;
 import freenet.node.SecurityLevels.FRIENDS_THREAT_LEVEL;
@@ -157,9 +159,11 @@ import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
 import freenet.support.OOMHandler;
 import freenet.support.PooledExecutor;
+import freenet.support.PrioritizedTicker;
 import freenet.support.ShortBuffer;
 import freenet.support.SimpleFieldSet;
 import freenet.support.SizeUtil;
+import freenet.support.Ticker;
 import freenet.support.TokenBucket;
 import freenet.support.Logger.LogLevel;
 import freenet.support.api.BooleanCallback;
@@ -519,11 +523,15 @@ public class Node implements TimeSkewDetectorCallback {
 	public static final int PACKET_SIZE = 1024;
 	public static final double DECREMENT_AT_MIN_PROB = 0.25;
 	public static final double DECREMENT_AT_MAX_PROB = 0.5;
-	// Send keepalives every 14-28 seconds. Comfortably fits within 30 second timeout.
-	// If the packet is dropped, we will send ack requests etc, so this should be fine.
-	public static final int KEEPALIVE_INTERVAL = 14000;
+	// Send keepalives every 7-14 seconds. Will be acked and if necessary resent.
+	// Old behaviour was keepalives every 14-28. Even that was adequate for a 30 second
+	// timeout. Most nodes don't need to send keepalives because they are constantly busy,
+	// this is only an issue for disabled darknet connections, very quiet private networks
+	// etc.
+	public static final int KEEPALIVE_INTERVAL = 7000;
 	// If no activity for 30 seconds, node is dead
-	public static final int MAX_PEER_INACTIVITY = 60000;
+	// 35 seconds allows plenty of time for resends etc even if above is 14 sec as it is on older nodes.
+	public static final int MAX_PEER_INACTIVITY = 35000;
 	/** Time after which a handshake is assumed to have failed. */
 	public static final int HANDSHAKE_TIMEOUT = 4800; // Keep the below within the 30 second assumed timeout.
 	// Inter-handshake time must be at least 2x handshake timeout
@@ -544,9 +552,6 @@ public class Node implements TimeSkewDetectorCallback {
 	static final int MIN_INTERVAL_BETWEEN_INCOMING_SWAP_REQUESTS = 900;
 	static final int MIN_INTERVAL_BETWEEN_INCOMING_PROBE_REQUESTS = 1000;
 	public static final int SYMMETRIC_KEY_LENGTH = 32; // 256 bits - note that this isn't used everywhere to determine it
-	/** Minimum space for zipped logfiles on testnet */
-	static final long TESTNET_MIN_MAX_ZIPPED_LOGFILES = 512*1024*1024;
-	static final String TESTNET_MIN_MAX_ZIPPED_LOGFILES_STRING = "512M";
 
 	/** Datastore directory */
 	private final File storeDir;
@@ -643,7 +648,8 @@ public class Node implements TimeSkewDetectorCallback {
 	final GetPubkey getPubKey;
 
 	/** RequestSender's currently transferring, by key */
-	private final HashMap<NodeCHK, RequestSender> transferringRequestSenders;
+	private final HashMap<NodeCHK, RequestSender> transferringRequestSendersRT;
+	private final HashMap<NodeCHK, RequestSender> transferringRequestSendersBulk;
 	/** UIDs of RequestHandler's currently transferring */
 	private final HashSet<Long> transferringRequestHandlers;
 	/** FetchContext for ARKs */
@@ -657,17 +663,29 @@ public class Node implements TimeSkewDetectorCallback {
 
 	/** HashSet of currently running request UIDs */
 	private final HashMap<Long,UIDTag> runningUIDs;
-	private final HashMap<Long,RequestTag> runningCHKGetUIDs;
-	private final HashMap<Long,RequestTag> runningLocalCHKGetUIDs;
-	private final HashMap<Long,RequestTag> runningSSKGetUIDs;
-	private final HashMap<Long,RequestTag> runningLocalSSKGetUIDs;
-	private final HashMap<Long,InsertTag> runningCHKPutUIDs;
-	private final HashMap<Long,InsertTag> runningLocalCHKPutUIDs;
-	private final HashMap<Long,InsertTag> runningSSKPutUIDs;
-	private final HashMap<Long,InsertTag> runningLocalSSKPutUIDs;
-	private final HashMap<Long,OfferReplyTag> runningCHKOfferReplyUIDs;
-	private final HashMap<Long,OfferReplyTag> runningSSKOfferReplyUIDs;
+	private final HashMap<Long,RequestTag> runningCHKGetUIDsBulk;
+	private final HashMap<Long,RequestTag> runningLocalCHKGetUIDsBulk;
+	private final HashMap<Long,RequestTag> runningSSKGetUIDsBulk;
+	private final HashMap<Long,RequestTag> runningLocalSSKGetUIDsBulk;
+	private final HashMap<Long,InsertTag> runningCHKPutUIDsBulk;
+	private final HashMap<Long,InsertTag> runningLocalCHKPutUIDsBulk;
+	private final HashMap<Long,InsertTag> runningSSKPutUIDsBulk;
+	private final HashMap<Long,InsertTag> runningLocalSSKPutUIDsBulk;
+	private final HashMap<Long,OfferReplyTag> runningCHKOfferReplyUIDsBulk;
+	private final HashMap<Long,OfferReplyTag> runningSSKOfferReplyUIDsBulk;
 
+	private final HashMap<Long,RequestTag> runningCHKGetUIDsRT;
+	private final HashMap<Long,RequestTag> runningLocalCHKGetUIDsRT;
+	private final HashMap<Long,RequestTag> runningSSKGetUIDsRT;
+	private final HashMap<Long,RequestTag> runningLocalSSKGetUIDsRT;
+	private final HashMap<Long,InsertTag> runningCHKPutUIDsRT;
+	private final HashMap<Long,InsertTag> runningLocalCHKPutUIDsRT;
+	private final HashMap<Long,InsertTag> runningSSKPutUIDsRT;
+	private final HashMap<Long,InsertTag> runningLocalSSKPutUIDsRT;
+	private final HashMap<Long,OfferReplyTag> runningCHKOfferReplyUIDsRT;
+	private final HashMap<Long,OfferReplyTag> runningSSKOfferReplyUIDsRT;
+
+	
 	/** Semi-unique ID for swap requests. Used to identify us so that the
 	 * topology can be reconstructed. */
 	public long swapIdentifier;
@@ -714,11 +732,10 @@ public class Node implements TimeSkewDetectorCallback {
 
 	public final Executor executor;
 	public final PacketSender ps;
+	public final PrioritizedTicker ticker;
 	final DNSRequester dnsr;
 	final NodeDispatcher dispatcher;
 	public final UptimeEstimator uptime;
-	final boolean testnetEnabled;
-	final TestnetHandler testnetHandler;
 	public final TokenBucket outputThrottle;
 	public boolean throttleLocalData;
 	private int outputBandwidthLimit;
@@ -735,10 +752,11 @@ public class Node implements TimeSkewDetectorCallback {
 	public static final short DEFAULT_MAX_HTL = (short)18;
 	private short maxHTL;
 	private boolean skipWrapperWarning;
+	private int maxPacketSize;
 	/** Should inserts ignore low backoff times by default? */
 	public static boolean IGNORE_LOW_BACKOFF_DEFAULT = false;
 	/** Definition of "low backoff times" for above. */
-	public static int LOW_BACKOFF = 30*1000;
+	public static final int LOW_BACKOFF = 30*1000;
 	/** Should inserts be fairly blatently prioritised on accept by default? */
 	public static boolean PREFER_INSERT_DEFAULT = false;
 	/** Should inserts fork when the HTL reaches cacheability? */
@@ -797,8 +815,6 @@ public class Node implements TimeSkewDetectorCallback {
 	// Helpers
 	public final InetAddress localhostAddress;
 	public final FreenetInetAddress fLocalhostAddress;
-
-	private boolean wasTestnet;
 
 	// The node starter
 	private static NodeStarter nodeStarter;
@@ -873,8 +889,6 @@ public class Node implements TimeSkewDetectorCallback {
 		} else {
 			lastVersion = Version.getArbitraryBuildNumber(verString, -1);
 		}
-
-		wasTestnet = Fields.stringToBool(fs.get("testnet"), false);
 	}
 
 	public void makeStore(String val) throws InvalidConfigValueException {
@@ -1112,19 +1126,31 @@ public class Node implements TimeSkewDetectorCallback {
 			throw new Error(e3);
 		}
 		fLocalhostAddress = new FreenetInetAddress(localhostAddress);
-		transferringRequestSenders = new HashMap<NodeCHK, RequestSender>();
+		transferringRequestSendersRT = new HashMap<NodeCHK, RequestSender>();
+		transferringRequestSendersBulk = new HashMap<NodeCHK, RequestSender>();
 		transferringRequestHandlers = new HashSet<Long>();
 		runningUIDs = new HashMap<Long,UIDTag>();
-		runningCHKGetUIDs = new HashMap<Long,RequestTag>();
-		runningLocalCHKGetUIDs = new HashMap<Long,RequestTag>();
-		runningSSKGetUIDs = new HashMap<Long,RequestTag>();
-		runningLocalSSKGetUIDs = new HashMap<Long,RequestTag>();
-		runningCHKPutUIDs = new HashMap<Long,InsertTag>();
-		runningLocalCHKPutUIDs = new HashMap<Long,InsertTag>();
-		runningSSKPutUIDs = new HashMap<Long,InsertTag>();
-		runningLocalSSKPutUIDs = new HashMap<Long,InsertTag>();
-		runningCHKOfferReplyUIDs = new HashMap<Long,OfferReplyTag>();
-		runningSSKOfferReplyUIDs = new HashMap<Long,OfferReplyTag>();
+		runningCHKGetUIDsRT = new HashMap<Long,RequestTag>();
+		runningLocalCHKGetUIDsRT = new HashMap<Long,RequestTag>();
+		runningSSKGetUIDsRT = new HashMap<Long,RequestTag>();
+		runningLocalSSKGetUIDsRT = new HashMap<Long,RequestTag>();
+		runningCHKPutUIDsRT = new HashMap<Long,InsertTag>();
+		runningLocalCHKPutUIDsRT = new HashMap<Long,InsertTag>();
+		runningSSKPutUIDsRT = new HashMap<Long,InsertTag>();
+		runningLocalSSKPutUIDsRT = new HashMap<Long,InsertTag>();
+		runningCHKOfferReplyUIDsRT = new HashMap<Long,OfferReplyTag>();
+		runningSSKOfferReplyUIDsRT = new HashMap<Long,OfferReplyTag>();
+
+		runningCHKGetUIDsBulk = new HashMap<Long,RequestTag>();
+		runningLocalCHKGetUIDsBulk = new HashMap<Long,RequestTag>();
+		runningSSKGetUIDsBulk = new HashMap<Long,RequestTag>();
+		runningLocalSSKGetUIDsBulk = new HashMap<Long,RequestTag>();
+		runningCHKPutUIDsBulk = new HashMap<Long,InsertTag>();
+		runningLocalCHKPutUIDsBulk = new HashMap<Long,InsertTag>();
+		runningSSKPutUIDsBulk = new HashMap<Long,InsertTag>();
+		runningLocalSSKPutUIDsBulk = new HashMap<Long,InsertTag>();
+		runningCHKOfferReplyUIDsBulk = new HashMap<Long,OfferReplyTag>();
+		runningSSKOfferReplyUIDsBulk = new HashMap<Long,OfferReplyTag>();
 
 		this.securityLevels = new SecurityLevels(this, config);
 
@@ -1350,7 +1376,7 @@ public class Node implements TimeSkewDetectorCallback {
 
 		// Determine where to bind to
 
-		usm = new MessageCore();
+		usm = new MessageCore(executor);
 
 		// FIXME maybe these configs should actually be under a node.ip subconfig?
 		ipDetector = new NodeIPDetector(this);
@@ -1472,39 +1498,6 @@ public class Node implements TimeSkewDetectorCallback {
 		});
 		routeAccordingToOurPeersLocation = nodeConfig.getBoolean("routeAccordingToOurPeersLocation");
 
-		securityLevels.addNetworkThreatLevelListener(new SecurityLevelListener<NETWORK_THREAT_LEVEL>() {
-
-			public void onChange(NETWORK_THREAT_LEVEL oldLevel, NETWORK_THREAT_LEVEL newLevel) {
-				synchronized(Node.this) {
-					boolean wantFOAF = true;
-					if(newLevel == NETWORK_THREAT_LEVEL.MAXIMUM || newLevel == NETWORK_THREAT_LEVEL.HIGH) {
-						// Opennet is disabled.
-						if(securityLevels.friendsThreatLevel == FRIENDS_THREAT_LEVEL.HIGH)
-							wantFOAF = false;
-					}
-					routeAccordingToOurPeersLocation = wantFOAF;
-				}
-			}
-
-		});
-
-		securityLevels.addFriendsThreatLevelListener(new SecurityLevelListener<FRIENDS_THREAT_LEVEL>() {
-
-			public void onChange(FRIENDS_THREAT_LEVEL oldLevel, FRIENDS_THREAT_LEVEL newLevel) {
-				synchronized(Node.this) {
-					boolean wantFOAF = true;
-					NETWORK_THREAT_LEVEL networkLevel = securityLevels.networkThreatLevel;
-					if(networkLevel == NETWORK_THREAT_LEVEL.MAXIMUM || networkLevel == NETWORK_THREAT_LEVEL.HIGH) {
-						// Opennet is disabled.
-						if(newLevel == FRIENDS_THREAT_LEVEL.HIGH)
-							wantFOAF = false;
-					}
-					routeAccordingToOurPeersLocation = wantFOAF;
-				}
-			}
-
-		});
-
 		nodeConfig.register("enableSwapQueueing", true, sortOrder++, true, false, "Node.enableSwapQueueing", "Node.enableSwapQueueingLong", new BooleanCallback() {
 			@Override
 			public Boolean get() {
@@ -1546,14 +1539,15 @@ public class Node implements TimeSkewDetectorCallback {
 
 		if(db != null) {
 			db.commit();
-			if(Logger.shouldLog(LogLevel.MINOR, this)) Logger.minor(this, "COMMITTED");
+			if(logMINOR) Logger.minor(this, "COMMITTED");
 		}
 
 		// Must be created after darknetCrypto
 		dnsr = new DNSRequester(this);
 		ps = new PacketSender(this);
+		ticker = new PrioritizedTicker(executor, getDarknetPortNumber());
 		if(executor instanceof PooledExecutor)
-			((PooledExecutor)executor).setTicker(ps);
+			((PooledExecutor)executor).setTicker(ticker);
 
 		Logger.normal(Node.class, "Creating node...");
 
@@ -1651,46 +1645,11 @@ public class Node implements TimeSkewDetectorCallback {
 
 		throttleLocalData = nodeConfig.getBoolean("throttleLocalTraffic");
 
-		// Testnet.
-		// Cannot be enabled/disabled on the fly.
-		// If enabled, forces certain other config options.
-
-		if((testnetHandler = TestnetHandler.maybeCreate(this, config)) != null) {
-			String msg = "WARNING: ENABLING TESTNET CODE! This WILL seriously jeopardize your anonymity!";
-			Logger.error(this, msg);
-			System.err.println(msg);
-			testnetEnabled = true;
-			if(logConfigHandler.getFileLoggerHook() == null) {
-				System.err.println("Forcing logging enabled (essential for testnet)");
-				logConfigHandler.forceEnableLogging();
-			}
-			LogLevel x = Logger.globalGetThresholdNew();
-			if(!((x == LogLevel.MINOR) || (x == LogLevel.DEBUG))) {
-				System.err.println("Forcing log threshold to MINOR for testnet, was "+x);
-				Logger.globalSetThreshold(LogLevel.MINOR);
-			}
-			if(logConfigHandler.getMaxZippedLogFiles() < TESTNET_MIN_MAX_ZIPPED_LOGFILES) {
-				System.err.println("Forcing max zipped logfiles space to 256MB for testnet");
-				try {
-					logConfigHandler.setMaxZippedLogFiles(TESTNET_MIN_MAX_ZIPPED_LOGFILES_STRING);
-				} catch (InvalidConfigValueException e) {
-					throw new Error("Impossible: " + e, e);
-				} catch (NodeNeedRestartException e) {
-					throw new Error("Impossible: " + e, e);
-				}
-			}
-		} else {
-			String s = "Testnet mode DISABLED. You may have some level of anonymity. :)\n"+
-				"Note that this version of Freenet is still a very early alpha, and may well have numerous bugs and design flaws.\n"+
-				"In particular: YOU ARE WIDE OPEN TO YOUR IMMEDIATE PEERS! They can eavesdrop on your requests with relatively little difficulty at present (correlation attacks etc).";
-			Logger.normal(this, s);
-			System.err.println(s);
-			testnetEnabled = false;
-			if(wasTestnet) {
-				FileLoggerHook flh = logConfigHandler.getFileLoggerHook();
-				if(flh != null) flh.deleteAllOldLogFiles();
-			}
-		}
+		String s = "Testnet mode DISABLED. You may have some level of anonymity. :)\n"+
+		"Note that this version of Freenet is still a very early alpha, and may well have numerous bugs and design flaws.\n"+
+		"In particular: YOU ARE WIDE OPEN TO YOUR IMMEDIATE PEERS! They can eavesdrop on your requests with relatively little difficulty at present (correlation attacks etc).";
+		Logger.normal(this, s);
+		System.err.println(s);
 
 		File nodeFile = nodeDir.file("node-"+getDarknetPortNumber());
 		File nodeFileBackup = nodeDir.file("node-"+getDarknetPortNumber()+".bak");
@@ -1717,12 +1676,6 @@ public class Node implements TimeSkewDetectorCallback {
 			}
 		}
 
-		if(wasTestnet != testnetEnabled) {
-			Logger.error(this, "Switched from testnet mode to non-testnet mode or vice versa! Regenerating pubkey, privkey, and deleting logs.");
-			// FIXME do we delete logs?
-			darknetCrypto.initCrypto();
-		}
-
 		usm.setDispatcher(dispatcher=new NodeDispatcher(this));
 
 		// Then read the peers
@@ -1731,11 +1684,25 @@ public class Node implements TimeSkewDetectorCallback {
 		peers.writePeers();
 		peers.updatePMUserAlert();
 
-		uptime = new UptimeEstimator(runDir, ps, darknetCrypto.identityHash);
+		uptime = new UptimeEstimator(runDir, ticker, darknetCrypto.identityHash);
 
 		// ULPRs
 
 		failureTable = new FailureTable(this);
+
+		nodeStats = new NodeStats(this, sortOrder, new SubConfig("node.load", config), obwLimit, ibwLimit, lastVersion);
+
+		clientCore = new NodeClientCore(this, config, nodeConfig, getDarknetPortNumber(), sortOrder, oldConfig, fproxyConfig, toadlets, nodeDBHandle, db);
+
+		// Node updater support
+
+		System.out.println("Initializing Node Updater");
+		try {
+			nodeUpdater = NodeUpdateManager.maybeCreate(this, config);
+		} catch (InvalidConfigValueException e) {
+			e.printStackTrace();
+			throw new NodeInitException(NodeInitException.EXIT_COULD_NOT_START_UPDATER, "Could not create Updater: "+e);
+		}
 
 		// Opennet
 
@@ -1874,6 +1841,9 @@ public class Node implements TimeSkewDetectorCallback {
 		});
 
 		acceptSeedConnections = opennetConfig.getBoolean("acceptSeedConnections");
+		
+		if(acceptSeedConnections && opennet != null)
+			opennet.crypto.socket.getAddressTracker().setHugeTracker();
 
 		opennetConfig.finishedInitialization();
 
@@ -2233,10 +2203,6 @@ public class Node implements TimeSkewDetectorCallback {
 			initRAMFS();
 		}
 
-		nodeStats = new NodeStats(this, sortOrder, new SubConfig("node.load", config), obwLimit, ibwLimit, lastVersion);
-
-		clientCore = new NodeClientCore(this, config, nodeConfig, getDarknetPortNumber(), sortOrder, oldConfig, fproxyConfig, toadlets, nodeDBHandle, db);
-
 		// dirty hack to expose HLSC as osgi service.
 		HighLevelSimpleClient hlsc = clientCore.makeClient((short) 1);
 		FreenetServiceActivator.registerService(HighLevelSimpleClient.class.getName(), hlsc, null);
@@ -2487,12 +2453,12 @@ public class Node implements TimeSkewDetectorCallback {
 		maxSlashdotCacheKeys = (int) Math.min(maxSlashdotCacheSize / sizePerKey, Integer.MAX_VALUE);
 
 		chkSlashdotcache = new CHKStore();
-		chkSlashdotcacheStore = new SlashdotStore<CHKBlock>(chkSlashdotcache, maxSlashdotCacheKeys, slashdotCacheLifetime, PURGE_INTERVAL, ps, this.clientCore.tempBucketFactory);
+		chkSlashdotcacheStore = new SlashdotStore<CHKBlock>(chkSlashdotcache, maxSlashdotCacheKeys, slashdotCacheLifetime, PURGE_INTERVAL, ticker, this.clientCore.tempBucketFactory);
 		pubKeySlashdotcache = new PubkeyStore();
-		pubKeySlashdotcacheStore = new SlashdotStore<DSAPublicKey>(pubKeySlashdotcache, maxSlashdotCacheKeys, slashdotCacheLifetime, PURGE_INTERVAL, ps, this.clientCore.tempBucketFactory);
+		pubKeySlashdotcacheStore = new SlashdotStore<DSAPublicKey>(pubKeySlashdotcache, maxSlashdotCacheKeys, slashdotCacheLifetime, PURGE_INTERVAL, ticker, this.clientCore.tempBucketFactory);
 		getPubKey.setLocalSlashdotcache(pubKeySlashdotcache);
 		sskSlashdotcache = new SSKStore(getPubKey);
-		sskSlashdotcacheStore = new SlashdotStore<SSKBlock>(sskSlashdotcache, maxSlashdotCacheKeys, slashdotCacheLifetime, PURGE_INTERVAL, ps, this.clientCore.tempBucketFactory);
+		sskSlashdotcacheStore = new SlashdotStore<SSKBlock>(sskSlashdotcache, maxSlashdotCacheKeys, slashdotCacheLifetime, PURGE_INTERVAL, ticker, this.clientCore.tempBucketFactory);
 
 		// MAXIMUM seclevel = no slashdot cache.
 
@@ -2521,6 +2487,32 @@ public class Node implements TimeSkewDetectorCallback {
 		});
 
 		skipWrapperWarning = nodeConfig.getBoolean("skipWrapperWarning");
+		
+		nodeConfig.register("maxPacketSize", 1280, sortOrder++, true, true, "Node.maxPacketSize", "Node.maxPacketSizeLong", new IntCallback() {
+
+			@Override
+			public Integer get() {
+				synchronized(Node.this) {
+					return maxPacketSize;
+				}
+			}
+
+			@Override
+			public void set(Integer val) throws InvalidConfigValueException,
+					NodeNeedRestartException {
+				synchronized(Node.this) {
+					if(val == maxPacketSize) return;
+					if(val < UdpSocketHandler.MIN_MTU) throw new InvalidConfigValueException("Must be over 576");
+					if(val > 1492) throw new InvalidConfigValueException("Larger than ethernet frame size unlikely to work!");
+					maxPacketSize = val;
+				}
+				updateMTU();
+			}
+			
+		}, true);
+		
+		maxPacketSize = nodeConfig.getInt("maxPacketSize");
+		updateMTU();
 
 		nodeConfig.finishedInitialization();
 		if(shouldWriteConfig)
@@ -2532,7 +2524,7 @@ public class Node implements TimeSkewDetectorCallback {
 		System.out.println("Initializing Plugin Manager");
 		pluginManager = new PluginManager(this, lastVersion);
 
-		shutdownHook.addLateJob(new NativeThread("Shutdown plugins", NativeThread.HIGH_PRIORITY, true) {
+		shutdownHook.addEarlyJob(new NativeThread("Shutdown plugins", NativeThread.HIGH_PRIORITY, true) {
 			public void realRun() {
 				pluginManager.stop(30*1000); // FIXME make it configurable??
 			}
@@ -2559,16 +2551,6 @@ public class Node implements TimeSkewDetectorCallback {
 		ctx.maxTempLength = 4096;
 
 		this.arkFetcherContext = ctx;
-
-		// Node updater support
-
-		System.out.println("Initializing Node Updater");
-		try {
-			nodeUpdater = NodeUpdateManager.maybeCreate(this, config);
-		} catch (InvalidConfigValueException e) {
-			e.printStackTrace();
-			throw new NodeInitException(NodeInitException.EXIT_COULD_NOT_START_UPDATER, "Could not create Updater: "+e);
-		}
 
 		registerNodeToNodeMessageListener(N2N_MESSAGE_TYPE_FPROXY, fproxyN2NMListener);
 		registerNodeToNodeMessageListener(Node.N2N_MESSAGE_TYPE_DIFFNODEREF, diffNoderefListener);
@@ -2611,7 +2593,7 @@ public class Node implements TimeSkewDetectorCallback {
 
 		if(db != null) {
 			db.commit();
-			if(Logger.shouldLog(LogLevel.MINOR, this)) Logger.minor(this, "COMMITTED");
+			if(logMINOR) Logger.minor(this, "COMMITTED");
 			try {
 				if(!clientCore.lateInitDatabase(nodeDBHandle, db))
 					failLateInitDatabase();
@@ -2628,9 +2610,12 @@ public class Node implements TimeSkewDetectorCallback {
 	}
 
 	private boolean databaseEncrypted;
-
-	private void setupDatabase(byte[] databaseKey) throws MasterKeysWrongPasswordException, MasterKeysFileSizeException, IOException {
-		/* FIXME: Backup the database! */
+	
+	/** 
+	 * @param databaseKey The encryption key to the database. Null if the database is not encrypted
+	 * @return A new Db4o Configuration object which is fully configured to Fred's desired database settings.
+	 */
+	private Configuration getNewDatabaseConfiguration(byte[] databaseKey) {
 		Configuration dbConfig = Db4o.newConfiguration();
 		/* On my db4o test node with lots of downloads, and several days old, com.db4o.internal.freespace.FreeSlotNode
 		 * used 73MB out of the 128MB limit (117MB used). This memory was not reclaimed despite constant garbage collection.
@@ -2701,6 +2686,29 @@ public class Node implements TimeSkewDetectorCallback {
 
 		System.err.println("Optimise native queries: "+dbConfig.optimizeNativeQueries());
 		System.err.println("Query activation depth: "+dbConfig.activationDepth());
+		
+		// The database is encrypted.
+		if(databaseKey != null) {
+			IoAdapter baseAdapter = dbConfig.io();
+			if(logDEBUG)
+				Logger.debug(this, "Encrypting database with "+HexUtil.bytesToHex(databaseKey));
+			try {
+				dbConfig.io(new EncryptingIoAdapter(baseAdapter, databaseKey, random));
+			} catch (GlobalOnlyConfigException e) {
+				// Fouled up after encrypting/decrypting.
+				System.err.println("Caught "+e+" opening encrypted database.");
+				e.printStackTrace();
+				WrapperManager.restart();
+				throw e;
+			}
+		}
+		
+		return dbConfig;
+	}
+
+	private void setupDatabase(byte[] databaseKey) throws MasterKeysWrongPasswordException, MasterKeysFileSizeException, IOException {
+		/* FIXME: Backup the database! */
+
 		ObjectContainer database;
 
 		File dbFileBackup = new File(dbFile.getPath()+".tmp");
@@ -2723,14 +2731,14 @@ public class Node implements TimeSkewDetectorCallback {
 				random.nextBytes(databaseKey);
 				FileUtil.secureDelete(dbFileCrypt, random);
 				FileUtil.secureDelete(dbFile, random);
-				database = openCryptDatabase(dbConfig, databaseKey);
+				database = openCryptDatabase(databaseKey);
 				synchronized(this) {
 					databaseEncrypted = true;
 				}
 			} else if(dbFile.exists() && securityLevels.getPhysicalThreatLevel() == PHYSICAL_THREAT_LEVEL.LOW) {
-				maybeDefragmentDatabase(dbConfig, dbFile);
+				maybeDefragmentDatabase(dbFile, null);
 				// Just open it.
-				database = Db4o.openFile(dbConfig, dbFile.toString());
+				database = Db4o.openFile(getNewDatabaseConfiguration(null), dbFile.toString());
 				synchronized(this) {
 					databaseEncrypted = false;
 				}
@@ -2773,17 +2781,29 @@ public class Node implements TimeSkewDetectorCallback {
 				}
 				fos.close();
 				readAdapter.close();
-				tempFile.renameTo(dbFile);
-				dbFileCrypt.delete();
-				database = Db4o.openFile(dbConfig, dbFile.toString());
-				System.err.println("Completed decrypting the old node.db4o.crypt.");
-				synchronized(this) {
-					databaseEncrypted = false;
+				if(FileUtil.renameTo(tempFile, dbFile)) {
+					dbFileCrypt.delete();
+					database = Db4o.openFile(getNewDatabaseConfiguration(null), dbFile.toString());
+					System.err.println("Completed decrypting the old node.db4o.crypt.");
+					synchronized(this) {
+						databaseEncrypted = false;
+					}
+				} else {
+					synchronized(this) {
+						notEnoughSpaceIsCrypt = false;
+						notEnoughSpaceForAutoCrypt = true;
+						notEnoughSpaceRenameFailed = true;
+						renameFailedFrom = tempFile;
+						renameFailedTo = dbFile;
+						databaseEncrypted = true;
+					}
+					// Still encrypted, but we can still open it.
+					database = openCryptDatabase(databaseKey);
 				}
 			} else if(dbFile.exists() && securityLevels.getPhysicalThreatLevel() != PHYSICAL_THREAT_LEVEL.LOW && autoChangeDatabaseEncryption && enoughSpaceForAutoChangeEncryption(dbFile, true)) {
 				// Migrate the unencrypted file to ciphertext.
 				// This will always succeed short of I/O errors.
-				maybeDefragmentDatabase(dbConfig, dbFile);
+				maybeDefragmentDatabase(dbFile, null);
 				if(databaseKey == null) {
 					// Try with no password
 					MasterKeys keys;
@@ -2815,12 +2835,22 @@ public class Node implements TimeSkewDetectorCallback {
 				}
 				fis.close();
 				readAdapter.close();
-				tempFile.renameTo(dbFileCrypt);
-				FileUtil.secureDelete(dbFile, random);
-				System.err.println("Completed encrypting the old node.db4o.");
-				database = openCryptDatabase(dbConfig, databaseKey);
-				synchronized(this) {
-					databaseEncrypted = true;
+				if(FileUtil.renameTo(tempFile, dbFileCrypt)) {
+					FileUtil.secureDelete(dbFile, random);
+					System.err.println("Completed encrypting the old node.db4o.");
+					database = openCryptDatabase(databaseKey);
+					synchronized(this) {
+						databaseEncrypted = true;
+					}
+				} else {
+					synchronized(this) {
+						notEnoughSpaceIsCrypt = true;
+						notEnoughSpaceForAutoCrypt = true;
+						notEnoughSpaceRenameFailed = true;
+						renameFailedFrom = tempFile;
+						renameFailedTo = dbFileCrypt;
+					}
+					throw new IOException("Unable to encrypt the old node.db4o.crypt because cannot rename database file");
 				}
 			} else if((dbFileCrypt.exists() && !dbFile.exists()) ||
 					(securityLevels.getPhysicalThreatLevel() == PHYSICAL_THREAT_LEVEL.NORMAL) ||
@@ -2833,14 +2863,14 @@ public class Node implements TimeSkewDetectorCallback {
 					databaseKey = keys.databaseKey;
 					keys.clearAllNotDatabaseKey();
 				}
-				database = openCryptDatabase(dbConfig, databaseKey);
+				database = openCryptDatabase(databaseKey);
 				synchronized(this) {
 					databaseEncrypted = true;
 				}
 			} else {
-				maybeDefragmentDatabase(dbConfig, dbFile);
+				maybeDefragmentDatabase(dbFile, null);
 				// Open unencrypted.
-				database = Db4o.openFile(dbConfig, dbFile.toString());
+				database = Db4o.openFile(getNewDatabaseConfiguration(null), dbFile.toString());
 				synchronized(this) {
 					databaseEncrypted = false;
 				}
@@ -2851,7 +2881,7 @@ public class Node implements TimeSkewDetectorCallback {
 			e.printStackTrace();
 		}
 		// DUMP DATABASE CONTENTS
-		if(Logger.shouldLog(LogLevel.DEBUG, ClientRequestScheduler.class) && database != null) {
+		if(logDEBUG && database != null) {
 		try {
 		System.err.println("DUMPING DATABASE CONTENTS:");
 		ObjectSet<Object> contents = database.queryByExample(new Object());
@@ -2947,6 +2977,9 @@ public class Node implements TimeSkewDetectorCallback {
 
 	private volatile boolean notEnoughSpaceForAutoCrypt = false;
 	private volatile boolean notEnoughSpaceIsCrypt = false;
+	private volatile boolean notEnoughSpaceRenameFailed = false;
+	private volatile File renameFailedFrom;
+	private volatile File renameFailedTo;
 	private volatile long notEnoughSpaceMinimumSpace = 0;
 
 	private boolean enoughSpaceForAutoChangeEncryption(File file, boolean isCrypt) {
@@ -2970,23 +3003,10 @@ public class Node implements TimeSkewDetectorCallback {
 	}
 
 
-	private ObjectContainer openCryptDatabase(Configuration dbConfig, byte[] databaseKey) throws IOException {
-		IoAdapter baseAdapter = dbConfig.io();
-		if(Logger.shouldLog(LogLevel.DEBUG, this))
-			Logger.debug(this, "Encrypting database with "+HexUtil.bytesToHex(databaseKey));
-		try {
-			dbConfig.io(new EncryptingIoAdapter(baseAdapter, databaseKey, random));
-		} catch (GlobalOnlyConfigException e) {
-			// Fouled up after encrypting/decrypting.
-			System.err.println("Caught "+e+" opening encrypted database.");
-			e.printStackTrace();
-			WrapperManager.restart();
-			throw e;
-		}
+	private ObjectContainer openCryptDatabase(byte[] databaseKey) throws IOException {
+		maybeDefragmentDatabase(dbFileCrypt, databaseKey);
 
-		maybeDefragmentDatabase(dbConfig, dbFileCrypt);
-
-		ObjectContainer database = Db4o.openFile(dbConfig, dbFileCrypt.toString());
+		ObjectContainer database = Db4o.openFile(getNewDatabaseConfiguration(databaseKey), dbFileCrypt.toString());
 		synchronized(this) {
 			databaseAwaitingPassword = false;
 		}
@@ -2994,7 +3014,7 @@ public class Node implements TimeSkewDetectorCallback {
 	}
 
 
-	private void maybeDefragmentDatabase(Configuration dbConfig, File databaseFile) throws IOException {
+	private void maybeDefragmentDatabase(File databaseFile, byte[] databaseKey) throws IOException {
 
 		synchronized(this) {
 			if(!defragDatabaseOnStartup) return;
@@ -3002,7 +3022,7 @@ public class Node implements TimeSkewDetectorCallback {
 
 		// Open it first, because defrag will throw if it needs to upgrade the file.
 
-		ObjectContainer database = Db4o.openFile(dbConfig, databaseFile.toString());
+		ObjectContainer database = Db4o.openFile(getNewDatabaseConfiguration(databaseKey), databaseFile.toString());
 		while(!database.close());
 
 		if(!databaseFile.exists()) return;
@@ -3021,7 +3041,7 @@ public class Node implements TimeSkewDetectorCallback {
 
 		DefragmentConfig config=new DefragmentConfig(databaseFile.getPath(),backupFile.getPath(),new BTreeIDMapping(tmpFile.getPath()));
 		config.storedClassFilter(new AvailableClassFilter());
-		config.db4oConfig(dbConfig);
+		config.db4oConfig(getNewDatabaseConfiguration(databaseKey));
 		try {
 			Defragment.defrag(config);
 		} catch (IOException e) {
@@ -3159,11 +3179,20 @@ public class Node implements TimeSkewDetectorCallback {
 
 	private void createAutoCryptFailedUserAlert() {
 		boolean isCrypt = notEnoughSpaceIsCrypt;
+		String title;
+		String text;
+		if(notEnoughSpaceRenameFailed) {
+			title = isCrypt ? l10n("failedToRenameEncryptingTitle") : l10n("failedToRenameDecryptingTitle");
+			text = l10n((isCrypt ? "failedToRenameEncrypting" : "failedToRenameDecrypting"), new String[] { "fromfile", "tofile" }, new String[] { renameFailedFrom.getAbsolutePath(), renameFailedTo.getAbsolutePath() } );
+		} else { 
+			title = isCrypt ? l10n("notEnoughSpaceToAutoEncryptTitle") : l10n("notEnoughSpaceToAutoDecryptTitle");
+			text = l10n((isCrypt ? "notEnoughSpaceToAutoEncrypt" : "notEnoughSpaceToAutoDecrypt"), new String[] { "size", "file" }, new String[] { SizeUtil.formatSize(notEnoughSpaceMinimumSpace), dbFile.getAbsolutePath() });
+		}
 		this.clientCore.alerts.register(new SimpleUserAlert(true,
-				isCrypt ? l10n("notEnoughSpaceToAutoEncryptTitle") : l10n("notEnoughSpaceToAutoDecryptTitle"),
-				l10n((isCrypt ? "notEnoughSpaceToAutoEncrypt" : "notEnoughSpaceToAutoDecrypt"), new String[] { "size", "file" }, new String[] { SizeUtil.formatSize(notEnoughSpaceMinimumSpace), dbFile.getAbsolutePath() }),
-				isCrypt ? l10n("notEnoughSpaceToAutoEncryptTitle") : l10n("notEnoughSpaceToAutoDecryptTitle"),
-				isCrypt ? UserAlert.ERROR : UserAlert.WARNING));
+				title,
+				text,
+				title,
+				(!isCrypt) && this.db != null ? UserAlert.WARNING : UserAlert.ERROR));
 	}
 
 	private void initRAMClientCacheFS() {
@@ -3306,7 +3335,7 @@ public class Node implements TimeSkewDetectorCallback {
 			if (bloomSize == -1)
 				bloomSize = (int) Math.min(maxTotalDatastoreSize / 2048, Integer.MAX_VALUE);
 			int bloomFilterSizeInM = storeBloomFilterCounting ? bloomSize / 6 * 4
-			        : (bloomSize + 6) / 6 * 8; // + 6 to make size different, trigger rebuild
+			        : bloomSize / 6 * 8;
 			// Increase size by 10% to allow some space for removing keys. Even a 2-bit counting filter gets saturated.
 			bloomFilterSizeInM *= 1.1;
 
@@ -3327,12 +3356,12 @@ public class Node implements TimeSkewDetectorCallback {
 			sskCacheFS.setAltStore(sskDataFS);
 
 			boolean delay =
-				chkDataFS.start(ps, false) |
-				chkCacheFS.start(ps, false) |
-				pubkeyDataFS.start(ps, false) |
-				pubkeyCacheFS.start(ps, false) |
-				sskDataFS.start(ps, false) |
-				sskCacheFS.start(ps, false);
+				chkDataFS.start(ticker, false) |
+				chkCacheFS.start(ticker, false) |
+				pubkeyDataFS.start(ticker, false) |
+				pubkeyCacheFS.start(ticker, false) |
+				sskDataFS.start(ticker, false) |
+				sskCacheFS.start(ticker, false);
 
 			if(delay) {
 
@@ -3347,12 +3376,12 @@ public class Node implements TimeSkewDetectorCallback {
 					public void run() {
 						System.err.println("Starting delayed init of datastore");
 						try {
-							chkDataFS.start(ps, true);
-							chkCacheFS.start(ps, true);
-							pubkeyDataFS.start(ps, true);
-							pubkeyCacheFS.start(ps, true);
-							sskDataFS.start(ps, true);
-							sskCacheFS.start(ps, true);
+							chkDataFS.start(ticker, true);
+							chkCacheFS.start(ticker, true);
+							pubkeyDataFS.start(ticker, true);
+							pubkeyCacheFS.start(ticker, true);
+							sskDataFS.start(ticker, true);
+							sskCacheFS.start(ticker, true);
 						} catch (IOException e) {
 							Logger.error(this, "Failed to start datastore: "+e, e);
 							System.err.println("Failed to start datastore: "+e);
@@ -3427,7 +3456,7 @@ public class Node implements TimeSkewDetectorCallback {
 		try {
 			int bloomSize = (int) Math.min(maxTotalClientCacheSize / 2048, Integer.MAX_VALUE);
 			int bloomFilterSizeInM = storeBloomFilterCounting ? bloomSize / 6 * 4
-			        : (bloomSize + 6) / 6 * 8; // + 6 to make size different, trigger rebuild
+			        : (bloomSize) / 6 * 8;
 
 			final CHKStore chkClientcache = new CHKStore();
 			final SaltedHashFreenetStore<CHKBlock> chkDataFS = makeClientcache(bloomFilterSizeInM, "CHK", true, chkClientcache, dontResizeOnStart, clientCacheMasterKey);
@@ -3437,9 +3466,9 @@ public class Node implements TimeSkewDetectorCallback {
 			final SaltedHashFreenetStore<SSKBlock> sskDataFS = makeClientcache(bloomFilterSizeInM, "SSK", true, sskClientcache, dontResizeOnStart, clientCacheMasterKey);
 
 			boolean delay =
-				chkDataFS.start(ps, false) |
-				pubkeyDataFS.start(ps, false) |
-				sskDataFS.start(ps, false);
+				chkDataFS.start(ticker, false) |
+				pubkeyDataFS.start(ticker, false) |
+				sskDataFS.start(ticker, false);
 
 			if(delay) {
 
@@ -3454,9 +3483,9 @@ public class Node implements TimeSkewDetectorCallback {
 					public void run() {
 						System.err.println("Starting delayed init of client-cache");
 						try {
-							chkDataFS.start(ps, true);
-							pubkeyDataFS.start(ps, true);
-							sskDataFS.start(ps, true);
+							chkDataFS.start(ticker, true);
+							pubkeyDataFS.start(ticker, true);
+							sskDataFS.start(ticker, true);
 						} catch (IOException e) {
 							Logger.error(this, "Failed to start client-cache: "+e, e);
 							System.err.println("Failed to start client-cache: "+e);
@@ -3509,7 +3538,7 @@ public class Node implements TimeSkewDetectorCallback {
 		System.out.println("Initializing "+type+" Data"+store+" (" + maxStoreKeys + " keys)");
 
 		SaltedHashFreenetStore<T> fs = SaltedHashFreenetStore.<T>construct(storeDir, type+"-"+store, cb,
-		        random, maxKeys, bloomFilterSizeInM, storeBloomFilterCounting, shutdownHook, storePreallocate, storeSaltHashResizeOnStart && !lateStart, lateStart ? ps : null, clientCacheMasterKey);
+		        random, maxKeys, bloomFilterSizeInM, storeBloomFilterCounting, shutdownHook, storePreallocate, storeSaltHashResizeOnStart && !lateStart, lateStart ? ticker : null, clientCacheMasterKey);
 		cb.setStore(fs);
 		return fs;
 	}
@@ -3672,7 +3701,9 @@ public class Node implements TimeSkewDetectorCallback {
 		if(opennet != null)
 			opennet.start();
 		ps.start(nodeStats);
-		usm.start(ps);
+		ticker.start();
+		scheduleVersionTransition();
+		usm.start(ticker);
 
 		if(isUsingWrapper()) {
 			Logger.normal(this, "Using wrapper correctly: "+nodeStarter);
@@ -3693,7 +3724,7 @@ public class Node implements TimeSkewDetectorCallback {
 		ipDetector.start();
 
 		// Start sending swaps
-		lm.startSender();
+		lm.start();
 
 		// Node Updater
 		try{
@@ -3703,10 +3734,6 @@ public class Node implements TimeSkewDetectorCallback {
 			e.printStackTrace();
 			throw new NodeInitException(NodeInitException.EXIT_COULD_NOT_START_UPDATER, "Could not start Updater: "+e);
 		}
-
-		// Start testnet handler
-		if(testnetHandler != null)
-			testnetHandler.start();
 
 		/* TODO: Make sure that this is called BEFORE any instances of HTTPFilter are created.
 		 * HTTPFilter uses checkForGCJCharConversionBug() which returns the value of the static
@@ -3732,7 +3759,7 @@ public class Node implements TimeSkewDetectorCallback {
 		// After everything has been created, write the config file back to disk.
 		if(config instanceof FreenetFilePersistentConfig) {
 			FreenetFilePersistentConfig cfg = (FreenetFilePersistentConfig) config;
-			cfg.finishedInit(this.ps);
+			cfg.finishedInit(this.ticker);
 			cfg.setHasNodeStarted();
 		}
 		config.store();
@@ -3745,11 +3772,29 @@ public class Node implements TimeSkewDetectorCallback {
 		hasStarted = true;
 	}
 
+	private void scheduleVersionTransition() {
+		long now = System.currentTimeMillis();
+		long transition = Version.transitionTime();
+		if(now < transition)
+			ticker.queueTimedJob(new Runnable() {
+				
+				public void run() {
+					freenet.support.Logger.OSThread.logPID(this);
+					PeerNode[] nodes = peers.myPeers;
+					for(int i = 0; i < nodes.length; i++) {
+						PeerNode pn = nodes[i];
+						pn.updateVersionRoutablity();
+					}
+				}
+			}, transition - now);
+	}
+
+
 	private static boolean jvmHasGCJCharConversionBug=false;
 
 	private void checkForEvilJVMBugs() {
 		// Now check whether we are likely to get the EvilJVMBug.
-		// If we are running a Sun or Blackdown JVM, on Linux, and LD_ASSUME_KERNEL is not set, then we are.
+		// If we are running a Sun/Oracle or Blackdown JVM, on Linux, and LD_ASSUME_KERNEL is not set, then we are.
 
 		String jvmVendor = System.getProperty("java.vm.vendor");
 		String jvmSpecVendor = System.getProperty("java.specification.vendor","");
@@ -3798,10 +3843,17 @@ public class Node implements TimeSkewDetectorCallback {
 			}
 		}
 
+		if(javaVersion.startsWith("1.5.0_")) {
+			clientCore.alerts.register(new SimpleUserAlert(false, l10n("java15DeprecatedTitle"), l10n("java15Deprecated"), l10n("java15DeprecatedTitle"), UserAlert.CRITICAL_ERROR));
+		}
+		
 		if(logMINOR) Logger.minor(this, "JVM vendor: "+jvmVendor+", JVM name: "+jvmName+", JVM version: "+javaVersion+", OS name: "+osName+", OS version: "+osVersion);
 
-		if((!isOpenJDK) && (jvmVendor.startsWith("Sun ") || (jvmVendor.startsWith("The FreeBSD Foundation") && jvmSpecVendor.startsWith("Sun ")) || (jvmVendor.startsWith("Apple ")))) {
-			// Sun bugs
+		//Add some checks for "Oracle" to futureproof against them renaming from "Sun".  
+		//Should have no effect because if a user has downloaded a new enough file for Oracle to have changed the name these bugs shouldn't apply.
+		//Still, one never knows and this code might be extended to cover future bugs.
+		if((!isOpenJDK) && (jvmVendor.startsWith("Sun ") || jvmVendor.startsWith("Oracle ")) || (jvmVendor.startsWith("The FreeBSD Foundation") && (jvmSpecVendor.startsWith("Sun ") || jvmSpecVendor.startsWith("Oracle "))) || (jvmVendor.startsWith("Apple "))) {
+			// Sun/Oracle bugs
 
 			// Spurious OOMs
 			// http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=4855795
@@ -3835,7 +3887,7 @@ public class Node implements TimeSkewDetectorCallback {
 			}
 
 		} else if (jvmVendor.startsWith("Apple ") || jvmVendor.startsWith("\"Apple ")) {
-			//Note that Sun does not produce VMs for the Macintosh operating system, dont ask the user to find one...
+			//Note that Sun/Oracle does not produce VMs for the Macintosh operating system, dont ask the user to find one...
 		} else if (jvmName.equalsIgnoreCase("JamVM")) {
 			// w00t.
 		} else {
@@ -3962,10 +4014,13 @@ public class Node implements TimeSkewDetectorCallback {
 		if (kb != null) {
 			// Probably somebody waiting for it. Trip it.
 			if (clientCore != null && clientCore.requestStarters != null) {
-				if (kb instanceof CHKBlock)
-					clientCore.requestStarters.chkFetchScheduler.tripPendingKey(kb);
-				else
-					clientCore.requestStarters.sskFetchScheduler.tripPendingKey(kb);
+				if (kb instanceof CHKBlock) {
+					clientCore.requestStarters.chkFetchSchedulerBulk.tripPendingKey(kb);
+					clientCore.requestStarters.chkFetchSchedulerRT.tripPendingKey(kb);
+				} else {
+					clientCore.requestStarters.sskFetchSchedulerBulk.tripPendingKey(kb);
+					clientCore.requestStarters.sskFetchSchedulerRT.tripPendingKey(kb);
+				}
 			}
 			failureTable.onFound(kb);
 			return kb;
@@ -3985,7 +4040,7 @@ public class Node implements TimeSkewDetectorCallback {
 	 * a RequestSender, unless the HTL is 0, in which case NULL.
 	 * RequestSender.
 	 */
-	public Object makeRequestSender(Key key, short htl, long uid, RequestTag tag, PeerNode source, boolean localOnly, boolean ignoreStore, boolean offersOnly, boolean canReadClientCache, boolean canWriteClientCache) {
+	public Object makeRequestSender(Key key, short htl, long uid, RequestTag tag, PeerNode source, boolean localOnly, boolean ignoreStore, boolean offersOnly, boolean canReadClientCache, boolean canWriteClientCache, boolean realTimeFlag) {
 		boolean canWriteDatastore = canWriteDatastoreRequest(htl);
 		if(logMINOR) Logger.minor(this, "makeRequestSender("+key+ ',' +htl+ ',' +uid+ ',' +source+") on "+getDarknetPortNumber());
 		// In store?
@@ -3999,11 +4054,15 @@ public class Node implements TimeSkewDetectorCallback {
 
 		// Transfer coalescing - match key only as HTL irrelevant
 		RequestSender sender = null;
+		HashMap<NodeCHK, RequestSender> transferringRequestSenders =
+			realTimeFlag ? transferringRequestSendersRT : transferringRequestSendersBulk;
 		synchronized(transferringRequestSenders) {
 			sender = transferringRequestSenders.get(key);
 		}
 		if(sender != null) {
 			if(logMINOR) Logger.minor(this, "Data already being transferred: "+sender);
+			sender.setTransferCoalesced();
+			tag.setSender(sender, true);
 			return sender;
 		}
 
@@ -4013,7 +4072,8 @@ public class Node implements TimeSkewDetectorCallback {
 			return null;
 		}
 
-		sender = new RequestSender(key, null, htl, uid, tag, this, source, offersOnly, canWriteClientCache, canWriteDatastore);
+		sender = new RequestSender(key, null, htl, uid, tag, this, source, offersOnly, canWriteClientCache, canWriteDatastore, realTimeFlag);
+		tag.setSender(sender, false);
 		sender.start();
 		if(logMINOR) Logger.minor(this, "Created new sender: "+sender);
 		return sender;
@@ -4045,6 +4105,8 @@ public class Node implements TimeSkewDetectorCallback {
 	 * Add a transferring RequestSender to our HashMap.
 	 */
 	public void addTransferringSender(NodeCHK key, RequestSender sender) {
+		HashMap<NodeCHK, RequestSender> transferringRequestSenders =
+			sender.realTimeFlag ? transferringRequestSendersRT : transferringRequestSendersBulk;
 		synchronized(transferringRequestSenders) {
 			transferringRequestSenders.put(key, sender);
 		}
@@ -4088,7 +4150,7 @@ public class Node implements TimeSkewDetectorCallback {
 		double dist=Location.distance(lm.getLocation(), loc);
 		if(canReadClientCache) {
 			try {
-				SSKBlock block = sskClientcache.fetch(key, dontPromote || !canWriteClientCache, canReadClientCache, forULPR, meta);
+				SSKBlock block = sskClientcache.fetch(key, dontPromote || !canWriteClientCache, canReadClientCache, forULPR, false, meta);
 				if(block != null) {
 					nodeStats.avgClientCacheSSKSuccess.report(loc);
 					if (dist > nodeStats.furthestClientCacheSSKSuccess)
@@ -4102,7 +4164,7 @@ public class Node implements TimeSkewDetectorCallback {
 		}
 		if(forULPR || useSlashdotCache || canReadClientCache) {
 			try {
-				SSKBlock block = sskSlashdotcache.fetch(key, dontPromote, canReadClientCache, forULPR, meta);
+				SSKBlock block = sskSlashdotcache.fetch(key, dontPromote, canReadClientCache, forULPR, false, meta);
 				if(block != null) {
 					nodeStats.avgSlashdotCacheSSKSuccess.report(loc);
 					if (dist > nodeStats.furthestSlashdotCacheSSKSuccess)
@@ -4114,15 +4176,17 @@ public class Node implements TimeSkewDetectorCallback {
 				Logger.error(this, "Could not read from slashdot/ULPR cache: "+e, e);
 			}
 		}
+		boolean ignoreOldBlocks = !writeLocalToDatastore;
+		if(canReadClientCache) ignoreOldBlocks = false;
 		if(logMINOR) dumpStoreHits();
 		try {
 
 			nodeStats.avgRequestLocation.report(loc);
-			SSKBlock block = sskDatastore.fetch(key, dontPromote || !canWriteDatastore, canReadClientCache, forULPR, meta);
+			SSKBlock block = sskDatastore.fetch(key, dontPromote || !canWriteDatastore, canReadClientCache, forULPR, ignoreOldBlocks, meta);
 			if(block == null) {
 				SSKStore store = oldSSK;
 				if(store != null)
-					block = store.fetch(key, dontPromote || !canWriteDatastore, canReadClientCache, forULPR, meta);
+					block = store.fetch(key, dontPromote || !canWriteDatastore, canReadClientCache, forULPR, ignoreOldBlocks, meta);
 			}
 			if(block != null) {
 			nodeStats.avgStoreSSKSuccess.report(loc);
@@ -4131,11 +4195,11 @@ public class Node implements TimeSkewDetectorCallback {
 				if(logDEBUG) Logger.debug(this, "Found key "+key+" in store");
 				return block;
 			}
-			block=sskDatacache.fetch(key, dontPromote || !canWriteDatastore, canReadClientCache, forULPR, meta);
+			block=sskDatacache.fetch(key, dontPromote || !canWriteDatastore, canReadClientCache, forULPR, ignoreOldBlocks, meta);
 			if(block == null) {
 				SSKStore store = oldSSKCache;
 				if(store != null)
-					block = store.fetch(key, dontPromote || !canWriteDatastore, canReadClientCache, forULPR, meta);
+					block = store.fetch(key, dontPromote || !canWriteDatastore, canReadClientCache, forULPR, ignoreOldBlocks, meta);
 			}
 			if (block != null) {
 			nodeStats.avgCacheSSKSuccess.report(loc);
@@ -4155,7 +4219,7 @@ public class Node implements TimeSkewDetectorCallback {
 		double dist=Location.distance(lm.getLocation(), loc);
 		if(canReadClientCache) {
 			try {
-				CHKBlock block = chkClientcache.fetch(key, dontPromote || !canWriteClientCache, meta);
+				CHKBlock block = chkClientcache.fetch(key, dontPromote || !canWriteClientCache, false, meta);
 				if(block != null) {
 					nodeStats.avgClientCacheCHKSuccess.report(loc);
 					if (dist > nodeStats.furthestClientCacheCHKSuccess)
@@ -4168,7 +4232,7 @@ public class Node implements TimeSkewDetectorCallback {
 		}
 		if(forULPR || useSlashdotCache || canReadClientCache) {
 			try {
-				CHKBlock block = chkSlashdotcache.fetch(key, dontPromote, meta);
+				CHKBlock block = chkSlashdotcache.fetch(key, dontPromote, false, meta);
 				if(block != null) {
 					nodeStats.avgSlashdotCacheCHKSucess.report(loc);
 					if (dist > nodeStats.furthestSlashdotCacheCHKSuccess)
@@ -4179,14 +4243,16 @@ public class Node implements TimeSkewDetectorCallback {
 				Logger.error(this, "Could not read from slashdot/ULPR cache: "+e, e);
 			}
 		}
+		boolean ignoreOldBlocks = !writeLocalToDatastore;
+		if(canReadClientCache) ignoreOldBlocks = false;
 		if(logMINOR) dumpStoreHits();
 		try {
 			nodeStats.avgRequestLocation.report(loc);
-			CHKBlock block = chkDatastore.fetch(key, dontPromote || !canWriteDatastore, meta);
+			CHKBlock block = chkDatastore.fetch(key, dontPromote || !canWriteDatastore, ignoreOldBlocks, meta);
 			if(block == null) {
 				CHKStore store = oldCHK;
 				if(store != null)
-					block = store.fetch(key, dontPromote || !canWriteDatastore, meta);
+					block = store.fetch(key, dontPromote || !canWriteDatastore, ignoreOldBlocks, meta);
 			}
 			if (block != null) {
 				nodeStats.avgStoreCHKSuccess.report(loc);
@@ -4194,11 +4260,11 @@ public class Node implements TimeSkewDetectorCallback {
 					nodeStats.furthestStoreCHKSuccess=dist;
 				return block;
 			}
-			block=chkDatacache.fetch(key, dontPromote || !canWriteDatastore, meta);
+			block=chkDatacache.fetch(key, dontPromote || !canWriteDatastore, ignoreOldBlocks, meta);
 			if(block == null) {
 				CHKStore store = oldCHKCache;
 				if(store != null)
-					block = store.fetch(key, dontPromote || !canWriteDatastore, meta);
+					block = store.fetch(key, dontPromote || !canWriteDatastore, ignoreOldBlocks, meta);
 			}
 			if (block != null) {
 				nodeStats.avgCacheCHKSuccess.report(loc);
@@ -4298,9 +4364,10 @@ public class Node implements TimeSkewDetectorCallback {
 				nodeStats.avgClientCacheCHKLocation.report(loc);
 			}
 
-			if ((forULPR || useSlashdotCache) && !(canWriteDatastore || writeLocalToDatastore))
+			if ((forULPR || useSlashdotCache) && !(canWriteDatastore || writeLocalToDatastore)) {
 				chkSlashdotcache.put(block, false);
 				nodeStats.avgSlashdotCacheCHKLocation.report(loc);
+			}
 			if (canWriteDatastore || writeLocalToDatastore) {
 
 				if (deep) {
@@ -4322,13 +4389,15 @@ public class Node implements TimeSkewDetectorCallback {
 			t.printStackTrace();
 			Logger.error(this, "Caught "+t+" storing data", t);
 		}
-		if(clientCore != null && clientCore.requestStarters != null)
-			clientCore.requestStarters.chkFetchScheduler.tripPendingKey(block);
+		if(clientCore != null && clientCore.requestStarters != null) {
+			clientCore.requestStarters.chkFetchSchedulerBulk.tripPendingKey(block);
+			clientCore.requestStarters.chkFetchSchedulerRT.tripPendingKey(block);
+		}
 	}
 
 	/** Store the block if this is a sink. Call for inserts. */
 	public void storeInsert(SSKBlock block, boolean deep, boolean overwrite, boolean canWriteClientCache, boolean canWriteDatastore) throws KeyCollisionException {
-		store(block, deep, canWriteClientCache, canWriteDatastore, false);
+		store(block, deep, overwrite, canWriteClientCache, canWriteDatastore, false);
 	}
 
 	/** Store only to the cache, and not the store. Called by requests,
@@ -4347,9 +4416,10 @@ public class Node implements TimeSkewDetectorCallback {
 				sskClientcache.put(block, overwrite, false);
 				nodeStats.avgClientCacheSSKLocation.report(loc);
 			}
-			if((forULPR || useSlashdotCache) && !(canWriteDatastore || writeLocalToDatastore))
+			if((forULPR || useSlashdotCache) && !(canWriteDatastore || writeLocalToDatastore)) {
 				sskSlashdotcache.put(block, overwrite, false);
 				nodeStats.avgSlashdotCacheSSKLocation.report(loc);
+			}
 			if(canWriteDatastore || writeLocalToDatastore) {
 				if(deep) {
 					sskDatastore.put(block, overwrite, !canWriteDatastore);
@@ -4371,14 +4441,18 @@ public class Node implements TimeSkewDetectorCallback {
 			t.printStackTrace();
 			Logger.error(this, "Caught "+t+" storing data", t);
 		}
-		if(clientCore != null && clientCore.requestStarters != null)
-			clientCore.requestStarters.sskFetchScheduler.tripPendingKey(block);
+		if(clientCore != null && clientCore.requestStarters != null) {
+			clientCore.requestStarters.sskFetchSchedulerBulk.tripPendingKey(block);
+			clientCore.requestStarters.sskFetchSchedulerRT.tripPendingKey(block);
+		}
 	}
 
 	/**
 	 * Remove a sender from the set of currently transferring senders.
 	 */
 	public void removeTransferringSender(NodeCHK key, RequestSender sender) {
+		HashMap<NodeCHK, RequestSender> transferringRequestSenders =
+			sender.realTimeFlag ? transferringRequestSendersRT : transferringRequestSendersBulk;
 		synchronized(transferringRequestSenders) {
 //			RequestSender rs = (RequestSender) transferringRequestSenders.remove(key);
 //			if(rs != sender) {
@@ -4432,11 +4506,11 @@ public class Node implements TimeSkewDetectorCallback {
 	 * @param ignoreLowBackoff
 	 * @param preferInsert
 	 */
-	public CHKInsertSender makeInsertSender(NodeCHK key, short htl, long uid, PeerNode source,
-			byte[] headers, PartiallyReceivedBlock prb, boolean fromStore, boolean canWriteClientCache, boolean forkOnCacheable, boolean preferInsert, boolean ignoreLowBackoff) {
+	public CHKInsertSender makeInsertSender(NodeCHK key, short htl, long uid, InsertTag tag, PeerNode source,
+			byte[] headers, PartiallyReceivedBlock prb, boolean fromStore, boolean canWriteClientCache, boolean forkOnCacheable, boolean preferInsert, boolean ignoreLowBackoff, boolean realTimeFlag) {
 		if(logMINOR) Logger.minor(this, "makeInsertSender("+key+ ',' +htl+ ',' +uid+ ',' +source+",...,"+fromStore);
 		CHKInsertSender is = null;
-		is = new CHKInsertSender(key, uid, headers, htl, source, this, prb, fromStore, canWriteClientCache, forkOnCacheable, preferInsert, ignoreLowBackoff);
+		is = new CHKInsertSender(key, uid, tag, headers, htl, source, this, prb, fromStore, canWriteClientCache, forkOnCacheable, preferInsert, ignoreLowBackoff,realTimeFlag);
 		is.start();
 		// CHKInsertSender adds itself to insertSenders
 		return is;
@@ -4455,8 +4529,8 @@ public class Node implements TimeSkewDetectorCallback {
 	 * @param ignoreLowBackoff
 	 * @param preferInsert
 	 */
-	public SSKInsertSender makeInsertSender(SSKBlock block, short htl, long uid, PeerNode source,
-			boolean fromStore, boolean canWriteClientCache, boolean canWriteDatastore, boolean forkOnCacheable, boolean preferInsert, boolean ignoreLowBackoff) {
+	public SSKInsertSender makeInsertSender(SSKBlock block, short htl, long uid, InsertTag tag, PeerNode source,
+			boolean fromStore, boolean canWriteClientCache, boolean canWriteDatastore, boolean forkOnCacheable, boolean preferInsert, boolean ignoreLowBackoff, boolean realTimeFlag) {
 		NodeSSK key = block.getKey();
 		if(key.getPubKey() == null) {
 			throw new IllegalArgumentException("No pub key when inserting");
@@ -4465,25 +4539,25 @@ public class Node implements TimeSkewDetectorCallback {
 		getPubKey.cacheKey(key.getPubKeyHash(), key.getPubKey(), false, canWriteClientCache, canWriteDatastore, false, writeLocalToDatastore);
 		Logger.minor(this, "makeInsertSender("+key+ ',' +htl+ ',' +uid+ ',' +source+",...,"+fromStore);
 		SSKInsertSender is = null;
-		is = new SSKInsertSender(block, uid, htl, source, this, fromStore, canWriteClientCache, forkOnCacheable, preferInsert, ignoreLowBackoff);
+		is = new SSKInsertSender(block, uid, tag, htl, source, this, fromStore, canWriteClientCache, forkOnCacheable, preferInsert, ignoreLowBackoff, realTimeFlag);
 		is.start();
 		return is;
 	}
 
-	public boolean lockUID(long uid, boolean ssk, boolean insert, boolean offerReply, boolean local, UIDTag tag) {
+	public boolean lockUID(long uid, boolean ssk, boolean insert, boolean offerReply, boolean local, boolean realTimeFlag, UIDTag tag) {
 		synchronized(runningUIDs) {
 			if(runningUIDs.containsKey(uid)) return false; // Already present.
 			runningUIDs.put(uid, tag);
 		}
 		// If these are switched around, we must remember to remove from both.
 		if(offerReply) {
-			HashMap<Long,OfferReplyTag> map = getOfferTracker(ssk);
+			HashMap<Long,OfferReplyTag> map = getOfferTracker(ssk, realTimeFlag);
 			innerLock(map, (OfferReplyTag)tag, uid, ssk, insert, offerReply, local);
 		} else if(insert) {
-			HashMap<Long,InsertTag> map = getInsertTracker(ssk,local);
+			HashMap<Long,InsertTag> map = getInsertTracker(ssk,local, realTimeFlag);
 			innerLock(map, (InsertTag)tag, uid, ssk, insert, offerReply, local);
 		} else {
-			HashMap<Long,RequestTag> map = getRequestTracker(ssk,local);
+			HashMap<Long,RequestTag> map = getRequestTracker(ssk,local, realTimeFlag);
 			innerLock(map, (RequestTag)tag, uid, ssk, insert, offerReply, local);
 		}
 		return true;
@@ -4499,18 +4573,24 @@ public class Node implements TimeSkewDetectorCallback {
 			if(logMINOR) Logger.minor(this, "Locked "+uid+" ssk="+ssk+" insert="+insert+" offerReply="+offerReply+" local="+local+" size="+map.size());
 		}
 	}
+	
+	/** Only used by UIDTag. */
+	void unlockUID(UIDTag tag, boolean canFail, boolean noRecord) {
+		unlockUID(tag.uid, tag.isSSK(), tag.isInsert(), canFail, tag.isOfferReply(), tag.wasLocal(), tag.realTimeFlag, tag, noRecord);
+	}
 
-	public void unlockUID(long uid, boolean ssk, boolean insert, boolean canFail, boolean offerReply, boolean local, UIDTag tag) {
-		completed(uid);
+	protected void unlockUID(long uid, boolean ssk, boolean insert, boolean canFail, boolean offerReply, boolean local, boolean realTimeFlag, UIDTag tag, boolean noRecord) {
+		if(!noRecord)
+			completed(uid);
 
 		if(offerReply) {
-			HashMap<Long,OfferReplyTag> map = getOfferTracker(ssk);
+			HashMap<Long,OfferReplyTag> map = getOfferTracker(ssk, realTimeFlag);
 			innerUnlock(map, (OfferReplyTag)tag, uid, ssk, insert, offerReply, local, canFail);
 		} else if(insert) {
-			HashMap<Long,InsertTag> map = getInsertTracker(ssk,local);
+			HashMap<Long,InsertTag> map = getInsertTracker(ssk,local, realTimeFlag);
 			innerUnlock(map, (InsertTag)tag, uid, ssk, insert, offerReply, local, canFail);
 		} else {
-			HashMap<Long,RequestTag> map = getRequestTracker(ssk,local);
+			HashMap<Long,RequestTag> map = getRequestTracker(ssk,local, realTimeFlag);
 			innerUnlock(map, (RequestTag)tag, uid, ssk, insert, offerReply, local, canFail);
 		}
 
@@ -4544,27 +4624,136 @@ public class Node implements TimeSkewDetectorCallback {
 		}
 	}
 
-	private HashMap<Long, RequestTag> getRequestTracker(boolean ssk, boolean local) {
-		if(ssk) {
-			return local ? runningLocalSSKGetUIDs : runningSSKGetUIDs;
+	public class CountedRequests {
+		final int total;
+		final int expectedTransfersOut;
+		final int expectedTransfersIn;
+		private CountedRequests(int count, int out, int in) {
+			total = count;
+			expectedTransfersOut = out;
+			expectedTransfersIn = in;
+		}
+	}
+	
+	public synchronized CountedRequests countRequests(boolean local, boolean ssk, boolean insert, boolean offer, boolean realTimeFlag, int transfersPerInsert, boolean ignoreLocalVsRemote) {
+		HashMap<Long, ? extends UIDTag> map = getTracker(local, ssk, insert, offer, realTimeFlag);
+		synchronized(map) {
+			int count = 0;
+			int transfersOut = 0;
+			int transfersIn = 0;
+			for(Map.Entry<Long, ? extends UIDTag> entry : map.entrySet()) {
+				UIDTag tag = entry.getValue();
+				count++;
+				transfersOut += tag.expectedTransfersOut(ignoreLocalVsRemote, transfersPerInsert);
+				transfersIn += tag.expectedTransfersIn(ignoreLocalVsRemote, transfersPerInsert);
+				if(logDEBUG) Logger.debug(this, "UID "+entry.getKey()+" : out "+transfersOut+" in "+transfersIn);
+			}
+			return new CountedRequests(count, transfersOut, transfersIn);
+		}
+	}
+	
+	public CountedRequests countRequests(PeerNode source, boolean requestsToNode, boolean local, boolean ssk, boolean insert, boolean offer, boolean realTimeFlag, int transfersPerInsert, boolean ignoreLocalVsRemote) {
+		HashMap<Long, ? extends UIDTag> map = getTracker(local, ssk, insert, offer, realTimeFlag);
+		synchronized(map) {
+		int count = 0;
+		int transfersOut = 0;
+		int transfersIn = 0;
+		if(!requestsToNode) {
+			// If a request is adopted by us as a result of a timeout, it can be in the 
+			// remote map despite having source == null. However, if a request is in the 
+			// local map it will always have source == null.
+			if(source != null && local) return new CountedRequests(0, 0, 0);
+			for(Map.Entry<Long, ? extends UIDTag> entry : map.entrySet()) {
+				UIDTag tag = entry.getValue();
+				if(tag.getSource() == source) {
+					if(logMINOR) Logger.minor(this, "Counting "+tag+" from "+entry.getKey()+" from "+source);
+					count++;
+					transfersOut += tag.expectedTransfersOut(ignoreLocalVsRemote, transfersPerInsert);
+					transfersIn += tag.expectedTransfersIn(ignoreLocalVsRemote, transfersPerInsert);
+				} else if(logDEBUG) Logger.debug(this, "Not counting "+entry.getKey());
+			}
+			return new CountedRequests(count, transfersOut, transfersIn);
 		} else {
-			return local ? runningLocalCHKGetUIDs : runningCHKGetUIDs;
+			// FIXME improve efficiency!
+			for(Map.Entry<Long, ? extends UIDTag> entry : map.entrySet()) {
+				UIDTag tag = entry.getValue();
+				// Ordinary requests can be routed to an offered key.
+				// So we *DO NOT* care whether it's an ordinary routed relayed request or a GetOfferedKey, if we are counting outgoing requests.
+				if(tag.currentlyFetchingOfferedKeyFrom(source)) {
+					if(logMINOR) Logger.minor(this, "Counting "+tag+" to "+entry.getKey());
+					transfersOut += tag.expectedTransfersOut(ignoreLocalVsRemote, transfersPerInsert);
+					transfersIn += tag.expectedTransfersIn(ignoreLocalVsRemote, transfersPerInsert);
+					count++;
+				} else if(tag.currentlyRoutingTo(source)) {
+					if(logMINOR) Logger.minor(this, "Counting "+tag+" to "+entry.getKey());
+					transfersOut += tag.expectedTransfersOut(ignoreLocalVsRemote, transfersPerInsert);
+					transfersIn += tag.expectedTransfersIn(ignoreLocalVsRemote, transfersPerInsert);
+					count++;
+				} else if(logDEBUG) Logger.debug(this, "Not counting "+entry.getKey());
+			}
+			if(logMINOR) Logger.minor(this, "Counted for "+(local?"local":"remote")+" "+(ssk?"ssk":"chk")+" "+(insert?"insert":"request")+" "+(offer?"offer":"")+" : "+count+" of "+map.size()+" for "+source);
+			return new CountedRequests(count, transfersOut, transfersIn);
+		}
+		}
+	}
+	
+	void reassignTagToSelf(UIDTag tag) {
+		// The tag remains remote, but we flag it as adopted.
+		tag.reassignToSelf();
+	}
+	
+	private synchronized HashMap<Long, ? extends UIDTag> getTracker(boolean local, boolean ssk,
+			boolean insert, boolean offer, boolean realTimeFlag) {
+		if(offer)
+			return getOfferTracker(ssk, realTimeFlag);
+		else if(insert)
+			return getInsertTracker(ssk, local, realTimeFlag);
+		else
+			return getRequestTracker(ssk, local, realTimeFlag);
+	}
+
+
+	private HashMap<Long, RequestTag> getRequestTracker(boolean ssk, boolean local, boolean realTimeFlag) {
+		if(realTimeFlag) {
+			if(ssk) {
+				return local ? runningLocalSSKGetUIDsRT : runningSSKGetUIDsRT;
+			} else {
+				return local ? runningLocalCHKGetUIDsRT : runningCHKGetUIDsRT;
+			}
+		} else {
+			if(ssk) {
+				return local ? runningLocalSSKGetUIDsBulk : runningSSKGetUIDsBulk;
+			} else {
+				return local ? runningLocalCHKGetUIDsBulk : runningCHKGetUIDsBulk;
+			}
 		}
 	}
 
-	private HashMap<Long, InsertTag> getInsertTracker(boolean ssk, boolean local) {
-		if(ssk) {
-			return local ? runningLocalSSKPutUIDs : runningSSKPutUIDs;
+	private HashMap<Long, InsertTag> getInsertTracker(boolean ssk, boolean local, boolean realTimeFlag) {
+		if(realTimeFlag) {
+			if(ssk) {
+				return local ? runningLocalSSKPutUIDsRT : runningSSKPutUIDsRT;
+			} else {
+				return local ? runningLocalCHKPutUIDsRT : runningCHKPutUIDsRT;
+			}
 		} else {
-			return local ? runningLocalCHKPutUIDs : runningCHKPutUIDs;
+			if(ssk) {
+				return local ? runningLocalSSKPutUIDsBulk : runningSSKPutUIDsBulk;
+			} else {
+				return local ? runningLocalCHKPutUIDsBulk : runningCHKPutUIDsBulk;
+			}
 		}
 	}
 
-	private HashMap<Long, OfferReplyTag> getOfferTracker(boolean ssk) {
-		return ssk ? runningSSKOfferReplyUIDs : runningCHKOfferReplyUIDs;
+	private HashMap<Long, OfferReplyTag> getOfferTracker(boolean ssk, boolean realTimeFlag) {
+		if(realTimeFlag)
+			return ssk ? runningSSKOfferReplyUIDsRT : runningCHKOfferReplyUIDsRT;
+		else
+			return ssk ? runningSSKOfferReplyUIDsBulk : runningCHKOfferReplyUIDsBulk;
 	}
 
-	static final int TIMEOUT = 10 * 60 * 1000;
+	// Must include bulk inserts so fairly long.
+	static final int TIMEOUT = 16 * 60 * 1000;
 
 	private void startDeadUIDChecker() {
 		getTicker().queueTimedJob(deadUIDChecker, TIMEOUT);
@@ -4573,16 +4762,26 @@ public class Node implements TimeSkewDetectorCallback {
 	private Runnable deadUIDChecker = new Runnable() {
 		public void run() {
 			try {
-				checkUIDs(runningLocalSSKGetUIDs);
-				checkUIDs(runningLocalCHKGetUIDs);
-				checkUIDs(runningLocalSSKPutUIDs);
-				checkUIDs(runningLocalCHKPutUIDs);
-				checkUIDs(runningSSKGetUIDs);
-				checkUIDs(runningCHKGetUIDs);
-				checkUIDs(runningSSKPutUIDs);
-				checkUIDs(runningCHKPutUIDs);
-				checkUIDs(runningSSKOfferReplyUIDs);
-				checkUIDs(runningCHKOfferReplyUIDs);
+				checkUIDs(runningLocalSSKGetUIDsRT);
+				checkUIDs(runningLocalCHKGetUIDsRT);
+				checkUIDs(runningLocalSSKPutUIDsRT);
+				checkUIDs(runningLocalCHKPutUIDsRT);
+				checkUIDs(runningSSKGetUIDsRT);
+				checkUIDs(runningCHKGetUIDsRT);
+				checkUIDs(runningSSKPutUIDsRT);
+				checkUIDs(runningCHKPutUIDsRT);
+				checkUIDs(runningSSKOfferReplyUIDsRT);
+				checkUIDs(runningCHKOfferReplyUIDsRT);
+				checkUIDs(runningLocalSSKGetUIDsBulk);
+				checkUIDs(runningLocalCHKGetUIDsBulk);
+				checkUIDs(runningLocalSSKPutUIDsBulk);
+				checkUIDs(runningLocalCHKPutUIDsBulk);
+				checkUIDs(runningSSKGetUIDsBulk);
+				checkUIDs(runningCHKGetUIDsBulk);
+				checkUIDs(runningSSKPutUIDsBulk);
+				checkUIDs(runningCHKPutUIDsBulk);
+				checkUIDs(runningSSKOfferReplyUIDsBulk);
+				checkUIDs(runningCHKOfferReplyUIDsBulk);
 			} finally {
 				getTicker().queueTimedJob(this, 60*1000);
 			}
@@ -4635,69 +4834,240 @@ public class Node implements TimeSkewDetectorCallback {
 	}
 
 	public int getNumSSKRequests() {
-		return runningSSKGetUIDs.size() + runningLocalSSKGetUIDs.size();
+		int total = 0;
+		synchronized(runningSSKGetUIDsBulk) {
+			total += runningSSKGetUIDsBulk.size();
+		}
+		synchronized(runningSSKGetUIDsRT) {
+			total += runningSSKGetUIDsRT.size();
+		}
+		synchronized(runningLocalSSKGetUIDsBulk) {
+			total += runningLocalSSKGetUIDsBulk.size();
+		}
+		synchronized(runningLocalSSKGetUIDsRT) {
+			total += runningLocalSSKGetUIDsRT.size();
+		}
+		return total;
 	}
 
 	public int getNumCHKRequests() {
-		return runningCHKGetUIDs.size() + runningLocalCHKGetUIDs.size();
+		int total = 0;
+		synchronized(runningCHKGetUIDsBulk) {
+			total += runningCHKGetUIDsBulk.size();
+		}
+		synchronized(runningCHKGetUIDsRT) {
+			total += runningCHKGetUIDsRT.size();
+		}
+		synchronized(runningLocalCHKGetUIDsBulk) {
+			total += runningLocalCHKGetUIDsBulk.size();
+		}
+		synchronized(runningLocalCHKGetUIDsRT) {
+			total += runningLocalCHKGetUIDsRT.size();
+		}
+		return total;
 	}
 
 	public int getNumSSKInserts() {
-		return runningSSKPutUIDs.size() + runningLocalSSKPutUIDs.size();
+		int total = 0;
+		synchronized(runningSSKPutUIDsBulk) {
+			total += runningSSKPutUIDsBulk.size();
+		}
+		synchronized(runningSSKPutUIDsRT) {
+			total += runningSSKPutUIDsRT.size();
+		}
+		synchronized(runningLocalSSKPutUIDsBulk) {
+			total += runningLocalSSKPutUIDsBulk.size();
+		}
+		synchronized(runningLocalSSKPutUIDsRT) {
+			total += runningLocalSSKPutUIDsRT.size();
+		}
+		return total;
 	}
 
 	public int getNumCHKInserts() {
-		return runningCHKPutUIDs.size() + runningLocalCHKPutUIDs.size();
+		int total = 0;
+		synchronized(runningCHKPutUIDsBulk) {
+			total += runningCHKPutUIDsBulk.size();
+		}
+		synchronized(runningCHKPutUIDsRT) {
+			total += runningCHKPutUIDsRT.size();
+		}
+		synchronized(runningLocalCHKPutUIDsBulk) {
+			total += runningLocalCHKPutUIDsBulk.size();
+		}
+		synchronized(runningLocalCHKPutUIDsRT) {
+			total += runningLocalCHKPutUIDsRT.size();
+		}
+		return total;
 	}
 
 	public int getNumLocalSSKRequests() {
-		return runningLocalSSKGetUIDs.size();
+		int total = 0;
+		synchronized(runningLocalSSKGetUIDsBulk) {
+			total += runningLocalSSKGetUIDsBulk.size();
+		}
+		synchronized(runningLocalSSKGetUIDsRT) {
+			total += runningLocalSSKGetUIDsRT.size();
+		}
+		return total;
 	}
 
 	public int getNumLocalCHKRequests() {
-		return runningLocalCHKGetUIDs.size();
-	}
-
-	public int getNumRemoteSSKRequests() {
-//		synchronized(runningSSKGetUIDs) {
-//			for(Long l : runningSSKGetUIDs)
-//				Logger.minor(this, "Running remote SSK fetch: "+l);
-//		}
-		return runningSSKGetUIDs.size();
+		int total = 0;
+		synchronized(runningLocalCHKGetUIDsBulk) {
+			total += runningLocalCHKGetUIDsBulk.size();
+		}
+		synchronized(runningLocalCHKGetUIDsRT) {
+			total += runningLocalCHKGetUIDsRT.size();
+		}
+		return total;
 	}
 
 	public int getNumRemoteCHKRequests() {
-		return runningCHKGetUIDs.size();
+		int total = 0;
+		synchronized(runningCHKGetUIDsBulk) {
+			total += runningCHKGetUIDsBulk.size();
+		}
+		synchronized(runningCHKGetUIDsRT) {
+			total += runningCHKGetUIDsRT.size();
+		}
+		return total;
 	}
 
-	public int getNumLocalSSKInserts() {
-		return runningLocalSSKPutUIDs.size();
+	public int getNumRemoteSSKRequests() {
+		int total = 0;
+		synchronized(runningSSKGetUIDsBulk) {
+			total += runningSSKGetUIDsBulk.size();
+		}
+		synchronized(runningSSKGetUIDsRT) {
+			total += runningSSKGetUIDsRT.size();
+		}
+		return total;
+	}
+
+	public int getNumRemoteSSKRequests(boolean realTimeFlag) {
+		if(realTimeFlag) {
+			synchronized(runningSSKGetUIDsRT) {
+				return runningSSKGetUIDsRT.size();
+			}
+		} else {
+			synchronized(runningSSKGetUIDsBulk) {
+				return runningSSKGetUIDsBulk.size();
+			}
+		}
 	}
 
 	public int getNumLocalCHKInserts() {
-		return runningLocalCHKPutUIDs.size();
+		int total = 0;
+		synchronized(runningLocalCHKPutUIDsBulk) {
+			total += runningLocalCHKPutUIDsBulk.size();
+		}
+		synchronized(runningLocalCHKPutUIDsRT) {
+			total += runningLocalCHKPutUIDsRT.size();
+		}
+		return total;
 	}
 
-	public int getNumRemoteSSKInserts() {
-		return runningSSKPutUIDs.size();
+	public int getNumLocalSSKInserts() {
+		int total = 0;
+		synchronized(runningLocalSSKPutUIDsBulk) {
+			total += runningLocalSSKPutUIDsBulk.size();
+		}
+		synchronized(runningLocalSSKPutUIDsRT) {
+			total += runningLocalSSKPutUIDsRT.size();
+		}
+		return total;
 	}
 
 	public int getNumRemoteCHKInserts() {
-		return runningCHKPutUIDs.size();
+		int total = 0;
+		synchronized(runningCHKPutUIDsBulk) {
+			total += runningCHKPutUIDsBulk.size();
+		}
+		synchronized(runningCHKPutUIDsRT) {
+			total += runningCHKPutUIDsRT.size();
+		}
+		return total;
+	}
+
+	public int getNumRemoteSSKInserts() {
+		int total = 0;
+		synchronized(runningSSKPutUIDsRT) {
+			total += runningSSKPutUIDsRT.size();
+		}
+		synchronized(runningSSKPutUIDsBulk) {
+			total += runningSSKPutUIDsBulk.size();
+		}
+		return total;
+	}
+
+	public int getNumRemoteCHKRequests(boolean realTimeFlag) {
+		return realTimeFlag ? runningCHKGetUIDsRT.size() : runningCHKGetUIDsBulk.size();
+	}
+
+	public int getNumLocalSSKInserts(boolean realTimeFlag) {
+		return realTimeFlag ? runningLocalSSKPutUIDsRT.size() : runningLocalSSKPutUIDsBulk.size();
+	}
+
+	public int getNumLocalCHKInserts(boolean realTimeFlag) {
+		return realTimeFlag ? runningLocalCHKPutUIDsRT.size() : runningLocalCHKPutUIDsBulk.size();
+	}
+
+	public int getNumLocalCHKRequests(boolean realTimeFlag) {
+		return realTimeFlag ? runningLocalCHKGetUIDsRT.size() : runningLocalCHKGetUIDsBulk.size();
+	}
+
+	public int getNumLocalSSKRequests(boolean realTimeFlag) {
+		return realTimeFlag ? runningLocalSSKGetUIDsRT.size() : runningLocalSSKGetUIDsBulk.size();
+	}
+
+	public int getNumRemoteSSKInserts(boolean realTimeFlag) {
+		return realTimeFlag ? runningSSKPutUIDsRT.size() : runningSSKPutUIDsBulk.size();
+	}
+
+	public int getNumRemoteCHKInserts(boolean realTimeFlag) {
+		return realTimeFlag ? runningCHKPutUIDsRT.size() : runningCHKPutUIDsBulk.size();
 	}
 
 	public int getNumSSKOfferReplies() {
-		return runningSSKOfferReplyUIDs.size();
+		int total = 0;
+		synchronized(runningSSKOfferReplyUIDsRT) {
+			total += runningSSKOfferReplyUIDsRT.size();
+		}
+		synchronized(runningSSKOfferReplyUIDsBulk) {
+			total += runningSSKOfferReplyUIDsBulk.size();
+		}
+		return total;
+	}
+	
+	public int getNumCHKOfferReplies() {
+		int total = 0;
+		synchronized(runningCHKOfferReplyUIDsRT) {
+			total += runningCHKOfferReplyUIDsRT.size();
+		}
+		synchronized(runningCHKOfferReplyUIDsBulk) {
+			total += runningCHKOfferReplyUIDsBulk.size();
+		}
+		return total;
+	}
+	
+	public int getNumSSKOfferReplies(boolean realTimeFlag) {
+		return realTimeFlag ? runningSSKOfferReplyUIDsRT.size() : runningSSKOfferReplyUIDsBulk.size();
 	}
 
-	public int getNumCHKOfferReplies() {
-		return runningCHKOfferReplyUIDs.size();
+	public int getNumCHKOfferReplies(boolean realTimeFlag) {
+		return realTimeFlag ? runningCHKOfferReplyUIDsRT.size() : runningCHKOfferReplyUIDsBulk.size();
 	}
 
 	public int getNumTransferringRequestSenders() {
-		synchronized(transferringRequestSenders) {
-			return transferringRequestSenders.size();
+		int total = 0;
+		synchronized(transferringRequestSendersRT) {
+			total += transferringRequestSendersRT.size();
 		}
+		synchronized(transferringRequestSendersBulk) {
+			total += transferringRequestSendersBulk.size();
+		}
+		return total;
 	}
 
 	public int getNumTransferringRequestHandlers() {
@@ -4737,20 +5107,31 @@ public class Node implements TimeSkewDetectorCallback {
 			return recentlyCompletedIDs.contains(id);
 		}
 	}
+	
+	private ArrayList<Long> completedBuffer = new ArrayList<Long>();
+	
+	// Every this many slots, we tell all the PeerMessageQueue's to remove the old Items for the ID's in question.
+	// This prevents memory DoS amongst other things.
+	static final int COMPLETED_THRESHOLD = 128;
 
 	/**
 	 * A request completed (regardless of success).
 	 */
 	void completed(long id) {
+		Long[] list;
 		synchronized (recentlyCompletedIDs) {
 			recentlyCompletedIDs.push(id);
 			while(recentlyCompletedIDs.size() > MAX_RECENTLY_COMPLETED_IDS)
 				recentlyCompletedIDs.pop();
+			completedBuffer.add(id);
+			if(completedBuffer.size() < COMPLETED_THRESHOLD) return;
+			list = completedBuffer.toArray(new Long[completedBuffer.size()]);
+			completedBuffer.clear();
 		}
-	}
-
-	public boolean isTestnetEnabled() {
-		return testnetEnabled;
+		for(PeerNode pn : peers.myPeers) {
+			if(!pn.isRoutingCompatible()) continue;
+			pn.removeUIDsFromMessageQueues(list);
+		}
 	}
 
 	public ClientKeyBlock fetchKey(ClientKey key, boolean canReadClientCache, boolean canWriteClientCache, boolean canWriteDatastore) throws KeyVerifyException {
@@ -5173,7 +5554,7 @@ public class Node implements TimeSkewDetectorCallback {
 	}
 
 	public Ticker getTicker() {
-		return ps;
+		return ticker;
 	}
 
 	public int getUnclaimedFIFOSize() {
@@ -5186,8 +5567,8 @@ public class Node implements TimeSkewDetectorCallback {
 	public void connectToSeednode(SeedServerTestPeerNode node) throws OpennetDisabledException, FSParseException, PeerParseException, ReferenceSignatureVerificationException {
 		peers.addPeer(node,false,false);
 	}
-	public void connect(Node node) throws FSParseException, PeerParseException, ReferenceSignatureVerificationException {
-		peers.connect(node.darknetCrypto.exportPublicFieldSet(), darknetCrypto.packetMangler);
+	public void connect(Node node, FRIEND_TRUST trust) throws FSParseException, PeerParseException, ReferenceSignatureVerificationException {
+		peers.connect(node.darknetCrypto.exportPublicFieldSet(), darknetCrypto.packetMangler, trust);
 	}
 
 	public short maxHTL() {
@@ -5230,8 +5611,8 @@ public class Node implements TimeSkewDetectorCallback {
 	public ProgramDirectory pluginDir() { return pluginDir; }
 
 
-	public DarknetPeerNode createNewDarknetNode(SimpleFieldSet fs) throws FSParseException, PeerParseException, ReferenceSignatureVerificationException {
-		return new DarknetPeerNode(fs, this, darknetCrypto, peers, false, darknetCrypto.packetMangler);
+	public DarknetPeerNode createNewDarknetNode(SimpleFieldSet fs, FRIEND_TRUST trust) throws FSParseException, PeerParseException, ReferenceSignatureVerificationException {
+		return new DarknetPeerNode(fs, this, darknetCrypto, peers, false, darknetCrypto.packetMangler, trust);
 	}
 
 	public OpennetPeerNode createNewOpennetNode(SimpleFieldSet fs) throws FSParseException, OpennetDisabledException, PeerParseException, ReferenceSignatureVerificationException {
@@ -5247,7 +5628,7 @@ public class Node implements TimeSkewDetectorCallback {
 	public OpennetPeerNode addNewOpennetNode(SimpleFieldSet fs, ConnectionType connectionType) throws FSParseException, PeerParseException, ReferenceSignatureVerificationException {
 		// FIXME: perhaps this should throw OpennetDisabledExcemption rather than returing false?
 		if(opennet == null) return null;
-		return opennet.addNewOpennetNode(fs, connectionType);
+		return opennet.addNewOpennetNode(fs, connectionType, false);
 	}
 
 	public byte[] getOpennetIdentity() {
@@ -5361,13 +5742,26 @@ public class Node implements TimeSkewDetectorCallback {
 			}
 		}
 	}
+	
+	public boolean isSeednode() {
+		return acceptSeedConnections;
+	}
 
 	/**
 	 * Returns true if the packet receiver should try to decode/process packets that are not from a peer (i.e. from a seed connection)
 	 * The packet receiver calls this upon receiving an unrecognized packet.
 	 */
-	public boolean wantAnonAuth() {
-		return opennet != null && acceptSeedConnections;
+	public boolean wantAnonAuth(boolean isOpennet) {
+		if(isOpennet)
+			return opennet != null && acceptSeedConnections;
+		else
+			return false;
+	}
+	
+	// FIXME make this configurable
+	// Probably should wait until we have non-opennet anon auth so we can add it to NodeCrypto.
+	public boolean wantAnonAuthChangeIP(boolean isOpennet) {
+		return !isOpennet;
 	}
 
 	public boolean opennetDefinitelyPortForwarded() {
@@ -5408,8 +5802,10 @@ public class Node implements TimeSkewDetectorCallback {
 
 	public int getTotalRunningUIDsAlt() {
 		synchronized(runningUIDs) {
-			return this.runningCHKGetUIDs.size() + this.runningCHKPutUIDs.size() + this.runningSSKGetUIDs.size() +
-			this.runningSSKGetUIDs.size() + this.runningSSKOfferReplyUIDs.size() + this.runningCHKOfferReplyUIDs.size();
+			return this.runningCHKGetUIDsRT.size() + this.runningCHKPutUIDsRT.size() + this.runningSSKGetUIDsRT.size() +
+			this.runningSSKGetUIDsRT.size() + this.runningSSKOfferReplyUIDsRT.size() + this.runningCHKOfferReplyUIDsRT.size() + 
+			this.runningCHKGetUIDsBulk.size() + this.runningCHKPutUIDsBulk.size() + this.runningSSKGetUIDsBulk.size() +
+			this.runningSSKGetUIDsBulk.size() + this.runningSSKOfferReplyUIDsBulk.size() + this.runningCHKOfferReplyUIDsBulk.size();
 		}
 	}
 
@@ -5421,17 +5817,31 @@ public class Node implements TimeSkewDetectorCallback {
 	}
 
 	public boolean peersWantKey(Key key) {
-		return failureTable.peersWantKey(key);
+		return failureTable.peersWantKey(key, null);
 	}
 
 	private SimpleUserAlert alertMTUTooSmall;
 
-	public final RequestClient nonPersistentClient = new RequestClient() {
+	public final RequestClient nonPersistentClientBulk = new RequestClient() {
 		public boolean persistent() {
 			return false;
 		}
 		public void removeFrom(ObjectContainer container) {
 			throw new UnsupportedOperationException();
+		}
+		public boolean realTimeFlag() {
+			return false;
+		}
+	};
+	public final RequestClient nonPersistentClientRT = new RequestClient() {
+		public boolean persistent() {
+			return false;
+		}
+		public void removeFrom(ObjectContainer container) {
+			throw new UnsupportedOperationException();
+		}
+		public boolean realTimeFlag() {
+			return true;
 		}
 	};
 
@@ -5451,150 +5861,12 @@ public class Node implements TimeSkewDetectorCallback {
 	}
 
 	public boolean shallWeRouteAccordingToOurPeersLocation() {
-		return routeAccordingToOurPeersLocation && Version.lastGoodBuild() >= 1160;
+		return routeAccordingToOurPeersLocation;
 	}
 
 	public boolean objectCanNew(ObjectContainer container) {
 		Logger.error(this, "Not storing Node in database", new Exception("error"));
 		return false;
-	}
-
-	private volatile long turtleCount;
-
-	/**
-	 * Make a running request sender into a turtle request.
-	 * Backoff: when the transfer finishes, or after 10 seconds if no cancellation.
-	 * Downstream: Cancel all dependant RequestHandler's and local requests.
-	 * This also removes it from the load management code.
-	 * Registration: We track the turtles for each peer, and overall. No two turtles from the
-	 * same node may share the same key, and there is an overall limit.
-	 * @param sender
-	 */
-	public void makeTurtle(RequestSender sender) {
-		// Registration
-		// FIXME check the datastore.
-		if(!this.registerTurtleTransfer(sender)) {
-			// Too many turtles running, or already two turtles for this key (we allow two in case one peer turtles as a DoS).
-			sender.killTurtle();
-			Logger.warning(this, "Didn't make turtle (global) for key "+sender.key+" for "+sender);
-			return;
-		}
-		PeerNode from = sender.transferringFrom();
-		if(from == null) {
-			// Race condition, it has finished, avoid NPE
-			return;
-		}
-		if(!from.registerTurtleTransfer(sender)) {
-			// Too many turtles running, or already a turtle for this key.
-			// Abort it.
-			unregisterTurtleTransfer(sender);
-			sender.killTurtle();
-			Logger.warning(this, "Didn't make turtle (peer) for key "+sender.key+" for "+sender);
-			return;
-		}
-		Logger.normal(this, "TURTLING: "+sender.key+" for "+sender);
-		// Do not transfer coalesce!!
-		synchronized(transferringRequestSenders) {
-			transferringRequestSenders.remove(sender.key);
-		}
-		turtleCount++;
-
-		// Abort downstream transfers, set the turtle mode flag and set up the backoff callback.
-		sender.setTurtle();
-	}
-
-	public long getTurtleCount() {
-		return turtleCount;
-	}
-
-	private static int MAX_TURTLES = 10;
-	private static int MAX_TURTLES_PER_KEY = 2;
-
-	private HashMap<Key,RequestSender[]> turtlingTransfers = new HashMap<Key,RequestSender[]>();
-
-	private boolean registerTurtleTransfer(RequestSender sender) {
-		Key key = sender.key;
-		synchronized(turtlingTransfers) {
-			if(getNumIncomingTurtles() >= MAX_TURTLES) {
-				Logger.warning(this, "Too many turtles running globally");
-				return false;
-			}
-			if(!turtlingTransfers.containsKey(key)) {
-				turtlingTransfers.put(key, new RequestSender[] { sender });
-				Logger.normal(this, "Running turtles (a): "+getNumIncomingTurtles()+" : "+turtlingTransfers.size());
-				return true;
-			} else {
-				RequestSender[] senders = turtlingTransfers.get(key);
-				if(senders.length >= MAX_TURTLES_PER_KEY) {
-					Logger.warning(this, "Too many turtles for key globally");
-					return false;
-				}
-				for(int i=0;i<senders.length;i++) {
-					if(senders[i] == sender) {
-						Logger.error(this, "Registering turtle for "+sender+" : "+key+" twice! (globally)");
-						return false;
-					}
-				}
-				RequestSender[] newSenders = new RequestSender[senders.length+1];
-				System.arraycopy(senders, 0, newSenders, 0, senders.length);
-				newSenders[senders.length] = sender;
-				turtlingTransfers.put(key, newSenders);
-				Logger.normal(this, "Running turtles (b): "+getNumIncomingTurtles()+" : "+turtlingTransfers.size());
-				return true;
-			}
-		}
-	}
-
-	public void unregisterTurtleTransfer(RequestSender sender) {
-		Key key = sender.key;
-		synchronized(turtlingTransfers) {
-			if(!turtlingTransfers.containsKey(key)) {
-				Logger.error(this, "Removing turtle "+sender+" for "+key+" : DOES NOT EXIST IN GLOBAL TURTLES LIST");
-				return;
-			}
-			RequestSender[] senders = turtlingTransfers.get(key);
-			if(senders.length == 1 && senders[0] == sender) {
-				turtlingTransfers.remove(key);
-				return;
-			}
-			if(senders.length == 2) {
-				if(senders[0] == sender) {
-					turtlingTransfers.put(key, new RequestSender[] { senders[1] });
-				} else if(senders[1] == sender) {
-					turtlingTransfers.put(key, new RequestSender[] { senders[0] });
-				}
-				return;
-			}
-			int x = 0;
-			for(int i=0;i<senders.length;i++) {
-				if(senders[i] == sender) x++;
-			}
-			if(x == 0) {
-				Logger.error(this, "Turtle not in global register: "+sender+" for "+key);
-				return;
-			}
-			if(senders.length == x) {
-				Logger.error(this, "Lots of copies of turtle: "+x);
-				turtlingTransfers.remove(key);
-				return;
-			}
-			RequestSender[] newSenders = new RequestSender[senders.length - x];
-			int idx = 0;
-			for(RequestSender s : senders) {
-				if(s == sender) continue;
-				newSenders[idx++] = s;
-			}
-			turtlingTransfers.put(key, newSenders);
-		}
-	}
-
-	public int getNumIncomingTurtles() {
-		synchronized(turtlingTransfers) {
-			int turtles = 0;
-			for(RequestSender[] senders : turtlingTransfers.values())
-				turtles += senders.length;
-			return turtles;
-		}
 	}
 
 	public void drawClientCacheBox(HTMLNode storeSizeInfobox) {
@@ -5642,7 +5914,7 @@ public class Node implements TimeSkewDetectorCallback {
 					System.arraycopy(keys.clientCacheMasterKey, 0, copied, 0, copied.length);
 					cachedClientCacheKey = copied;
 					// Wipe it if haven't specified datastore size in 10 minutes.
-					ps.queueTimedJob(new Runnable() {
+					ticker.queueTimedJob(new Runnable() {
 						public void run() {
 							synchronized(Node.this) {
 								MasterKeys.clear(cachedClientCacheKey);
@@ -5806,7 +6078,7 @@ public class Node implements TimeSkewDetectorCallback {
     	    	synchronized(this) {
     	    		completeInsertsTotal++;
     	    		if(wouldHaveStored) {
-    	    			Logger.error(this, "Would have stored but haven't stored");
+    	    			if(logMINOR) Logger.minor(this, "Would have stored but haven't stored");
     	    			completeInsertsNotStoredWouldHaveStored++;
     	    		}
     	    	}
@@ -5819,7 +6091,7 @@ public class Node implements TimeSkewDetectorCallback {
     	    	synchronized(this) {
     	    		completeInsertsTotal++;
     	    		if(wouldHaveStored) {
-    	    			Logger.error(this, "Would have stored but haven't stored");
+    	    			if(logMINOR) Logger.minor(this, "Would have stored but haven't stored");
     	    			completeInsertsNotStoredWouldHaveStored++;
     	    		}
     	    	}
@@ -5845,5 +6117,47 @@ public class Node implements TimeSkewDetectorCallback {
 			infobox.addChild("p", "Would have stored: "+completeInsertsOldStore+" of "+completeInsertsTotal+" ("+fix3p3pct.format((completeInsertsOldStore*1.0)/completeInsertsTotal)+")");
 			infobox.addChild("p", "Would have stored but wasn't stored: "+completeInsertsNotStoredWouldHaveStored+" of "+completeInsertsTotal+" ("+fix3p3pct.format((completeInsertsNotStoredWouldHaveStored*1.0)/completeInsertsTotal)+")");
 		}
+	}
+
+	public boolean getWriteLocalToDatastore() {
+		return writeLocalToDatastore;
+	}
+	
+	public boolean getUseSlashdotCache() {
+		return useSlashdotCache;
+	}
+
+
+	public int getMinimumMTU() {
+		int mtu;
+		synchronized(this) {
+			mtu = maxPacketSize;
+		}
+		if(ipDetector != null) {
+			int detected = ipDetector.getMinimumDetectedMTU();
+			if(detected < mtu) return detected;
+		}
+		return mtu;
+	}
+
+
+	public void updateMTU() {
+		this.darknetCrypto.socket.calculateMaxPacketSize();
+		OpennetManager om = opennet;
+		if(om != null) {
+			om.crypto.socket.calculateMaxPacketSize();
+		}
+	}
+
+
+	public boolean isTestnetEnabled() {
+		return false;
+	}
+
+
+	public MersenneTwister createRandom() {
+		byte[] buf = new byte[16];
+		random.nextBytes(buf);
+		return new MersenneTwister(buf);
 	}
 }

@@ -190,6 +190,7 @@ public class FreenetURI implements Cloneable {
 
 	public FreenetURI(FreenetURI uri) {
 //		this.uniqueHashCode = super.hashCode();
+		if(uri.keyType == null) throw new NullPointerException();
 		keyType = uri.keyType;
 		docName = uri.docName;
 		if(uri.metaStr != null) {
@@ -217,7 +218,7 @@ public class FreenetURI implements Cloneable {
 	
 	boolean noCacheURI = false;
 	
-	/** Optimise for memory. */
+	/** Optimize for memory. */
 	public FreenetURI intern() {
 		boolean changedAnything = false;
 		byte[] x = extra;
@@ -1078,7 +1079,7 @@ public class FreenetURI implements Cloneable {
 	}
 
 	public void objectOnDelete(ObjectContainer container) {
-		if(Logger.shouldLog(LogLevel.DEBUG, this)) Logger.debug(this, "Deleting URI", new Exception("debug"));
+		if(logDEBUG) Logger.debug(this, "Deleting URI", new Exception("debug"));
 	}
 
 	/** Is this key a USK? */
@@ -1129,11 +1130,14 @@ public class FreenetURI implements Cloneable {
 		if(keyType.equalsIgnoreCase("USK"))
 			return suggestedEdition;
 		else if(keyType.equalsIgnoreCase("SSK")) {
-			if (!docName.matches(".*\\-[0-9]+")) /* Taken from uskForSSK, also modify there if necessary */
+			if (!docName.matches(".*\\-[0-9]+")) /* Taken from uskForSSK, also modify there if necessary; TODO just use isSSKForUSK() here?! */
 				throw new IllegalStateException();
 
 			return Long.valueOf(docName.substring(docName.lastIndexOf('-') + 1, docName.length()));
 		} else
 			throw new IllegalStateException();
 	}
+
+	// TODO add something like the following?
+	// public boolean isUpdatable() { return isUSK() || isSSKForUSK() }
 }

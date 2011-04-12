@@ -37,6 +37,7 @@ import freenet.support.Logger.LogLevel;
 import freenet.support.api.Bucket;
 import freenet.support.io.BucketTools;
 import freenet.support.io.NativeThread;
+import freenet.support.io.NoCloseProxyOutputStream;
 
 public class SimpleManifestPutter extends BaseClientPutter implements PutCompletionCallback {
 
@@ -75,7 +76,7 @@ public class SimpleManifestPutter extends BaseClientPutter implements PutComplet
 			InsertBlock block =
 				new InsertBlock(data, cm, persistent() ? FreenetURI.EMPTY_CHK_URI.clone() : FreenetURI.EMPTY_CHK_URI);
 			this.origSFI =
-				new SingleFileInserter(this, this, block, false, ctx, false, getCHKOnly, true, null, null, false, null, earlyEncode, false, persistent, 0, 0, null, cryptoAlgorithm, forceCryptoKey);
+				new SingleFileInserter(this, this, block, false, ctx, realTimeFlag, false, getCHKOnly, true, null, null, false, null, earlyEncode, false, persistent, 0, 0, null, cryptoAlgorithm, forceCryptoKey);
 			metadata = null;
 			containerHandle = null;
 		}
@@ -141,7 +142,7 @@ public class SimpleManifestPutter extends BaseClientPutter implements PutComplet
 
 		@Override
 		public void cancel(ObjectContainer container, ClientContext context) {
-			if(Logger.shouldLog(LogLevel.MINOR, this))
+			if(logMINOR)
 				Logger.minor(this, "Cancelling "+this, new Exception("debug"));
 			ClientPutState oldState = null;
 			synchronized(this) {
@@ -757,7 +758,7 @@ public class SimpleManifestPutter extends BaseClientPutter implements PutComplet
 				HashMap<String,Object> subMap = new HashMap<String,Object>();
 				putHandlersByName.put(name, subMap);
 				makePutHandlers(Metadata.forceMap(o), subMap, zipPrefix+name+ '/', persistent);
-				if(Logger.shouldLog(LogLevel.DEBUG, this))
+				if(logDEBUG)
 					Logger.debug(this, "Sub map for "+name+" : "+subMap.size()+" elements from "+((HashMap)o).size());
 			} else {
 				ManifestElement element = (ManifestElement) o;
@@ -981,9 +982,14 @@ public class SimpleManifestPutter extends BaseClientPutter implements PutComplet
 				Bucket outputBucket = context.getBucketFactory(persistent()).makeBucket(baseMetadata.dataLength());
 				// TODO: try both ? - maybe not worth it
 				archiveType = ARCHIVE_TYPE.getDefault();
+				OutputStream os = new BufferedOutputStream(outputBucket.getOutputStream());
 				String mimeType = (archiveType == ARCHIVE_TYPE.TAR ?
-					createTarBucket(bucket, outputBucket, container) :
-					createZipBucket(bucket, outputBucket, container));
+					createTarBucket(bucket, os, container) :
+					createZipBucket(bucket, os, container));
+				os.flush();
+				os.close();
+				if(logMINOR)
+					Logger.minor(this, "Archive size is "+outputBucket.size());
 				bucket.free();
 				if(persistent()) bucket.removeFrom(container);
 
@@ -1012,7 +1018,7 @@ public class SimpleManifestPutter extends BaseClientPutter implements PutComplet
 		try {
 			// Treat it as a splitfile for purposes of determining reinserts.
 			metadataInserter =
-				new SingleFileInserter(this, this, block, isMetadata, ctx, (archiveType == ARCHIVE_TYPE.ZIP) , getCHKOnly, false, baseMetadata, archiveType, true, null, earlyEncode, true, persistent(), 0, 0, null, cryptoAlgorithm, ckey);
+				new SingleFileInserter(this, this, block, isMetadata, ctx, realTimeFlag, (archiveType == ARCHIVE_TYPE.ZIP) , getCHKOnly, false, baseMetadata, archiveType, true, null, earlyEncode, true, persistent(), 0, 0, null, cryptoAlgorithm, ckey);
 			if(logMINOR) Logger.minor(this, "Inserting main metadata: "+metadataInserter+" for "+baseMetadata+" for "+this);
 			if(persistent()) {
 				container.activate(metadataPuttersByMetadata, 2);
@@ -1028,7 +1034,7 @@ public class SimpleManifestPutter extends BaseClientPutter implements PutComplet
 				container.deactivate(baseMetadata, 1);
 
 			}
-			metadataInserter.start(null, container, context);
+			metadataInserter.start(container, context);
 		} catch (InsertException e) {
 			fail(e, container, context);
 			return;
@@ -1039,10 +1045,10 @@ public class SimpleManifestPutter extends BaseClientPutter implements PutComplet
 		}
 	}
 
-	private String createTarBucket(Bucket inputBucket, Bucket outputBucket, ObjectContainer container) throws IOException {
+	private String createTarBucket(Bucket inputBucket, OutputStream os, ObjectContainer container) throws IOException {
 		if(logMINOR) Logger.minor(this, "Create a TAR Bucket");
 
-		OutputStream os = new BufferedOutputStream(outputBucket.getOutputStream());
+		// FIXME: TarOutputStream.finish() does NOT call TarBuffer.flushBlock() from TarBuffer.close().
 		TarArchiveOutputStream tarOS = new TarArchiveOutputStream(os);
 		PaxFormatter pf = new PaxFormatter(tarOS);
 
@@ -1064,19 +1070,14 @@ public class SimpleManifestPutter extends BaseClientPutter implements PutComplet
 
 		// Both finish() and close() are necessary.
 		tarOS.finish();
-		tarOS.flush();
 		tarOS.close();
-
-		if(logMINOR)
-			Logger.minor(this, "Archive size is "+outputBucket.size());
 
 		return ARCHIVE_TYPE.TAR.mimeTypes[0];
 	}
 
-	private String createZipBucket(Bucket inputBucket, Bucket outputBucket, ObjectContainer container) throws IOException {
+	private String createZipBucket(Bucket inputBucket, OutputStream os, ObjectContainer container) throws IOException {
 		if(logMINOR) Logger.minor(this, "Create a ZIP Bucket");
 
-		OutputStream os = new BufferedOutputStream(outputBucket.getOutputStream());
 		ZipOutputStream zos = new ZipOutputStream(os);
 		ZipEntry ze;
 
@@ -1102,8 +1103,6 @@ public class SimpleManifestPutter extends BaseClientPutter implements PutComplet
 		zos.closeEntry();
 		// Both finish() and close() are necessary.
 		zos.finish();
-		zos.flush();
-		zos.close();
 
 		return ARCHIVE_TYPE.ZIP.mimeTypes[0];
 	}
@@ -1143,12 +1142,12 @@ public class SimpleManifestPutter extends BaseClientPutter implements PutComplet
 				InsertBlock ib = new InsertBlock(b, null, persistent() ? FreenetURI.EMPTY_CHK_URI.clone() : FreenetURI.EMPTY_CHK_URI);
 				// Don't random-encrypt the metadata.
 				SingleFileInserter metadataInserter =
-					new SingleFileInserter(this, this, ib, true, ctx, false, getCHKOnly, false, m, null, true, null, earlyEncode, false, persistent(), 0, 0, null, cryptoAlgorithm, null);
+					new SingleFileInserter(this, this, ib, true, ctx, realTimeFlag, false, getCHKOnly, false, m, null, true, null, earlyEncode, false, persistent(), 0, 0, null, cryptoAlgorithm, null);
 				if(logMINOR) Logger.minor(this, "Inserting subsidiary metadata: "+metadataInserter+" for "+m);
 				synchronized(this) {
 					this.metadataPuttersByMetadata.put(m, metadataInserter);
 				}
-				metadataInserter.start(null, container, context);
+				metadataInserter.start(container, context);
 				if(persistent()) {
 					container.deactivate(metadataInserter, 1);
 					container.deactivate(m, 1);
@@ -1498,9 +1497,9 @@ public class SimpleManifestPutter extends BaseClientPutter implements PutComplet
 				}
 			}
 		}
-		if(token != baseMetadata)
-			token.removeFrom(container);
 		if(persistent()) {
+			if(token != baseMetadata)
+				token.removeFrom(container);
 			container.ext().store(metadataPuttersByMetadata, 2);
 			container.deactivate(metadataPuttersByMetadata, 1);
 			state.removeFrom(container, context);

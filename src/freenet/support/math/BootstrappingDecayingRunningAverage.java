@@ -3,6 +3,7 @@
  * http://www.gnu.org/ for further details of the GPL. */
 package freenet.support.math;
 
+import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
 import freenet.support.SimpleFieldSet;
 import freenet.support.Logger.LogLevel;
@@ -33,6 +34,16 @@ public final class BootstrappingDecayingRunningAverage implements RunningAverage
 	private double currentValue;
 	private long reports;
 	private int maxReports;
+
+        private static volatile boolean logDEBUG;
+	static {
+		Logger.registerLogThresholdCallback(new LogThresholdCallback(){
+			@Override
+			public void shouldUpdate(){
+				logDEBUG = Logger.shouldLog(LogLevel.DEBUG, this);
+			}
+		});
+	}
     
 	/**
 	 * Constructor
@@ -56,9 +67,13 @@ public final class BootstrappingDecayingRunningAverage implements RunningAverage
 		reports = 0;
 		currentValue = defaultValue;
 		this.maxReports = maxReports;
+		assert(maxReports > 0);
 		if(fs != null) {
-			currentValue = fs.getDouble("CurrentValue", currentValue);
-			reports = fs.getLong("Reports", reports);
+			double d = fs.getDouble("CurrentValue", currentValue);
+			if(!(Double.isNaN(d) || d < min || d > max)) {
+				currentValue = d;
+				reports = fs.getLong("Reports", reports);
+			}
 		}
 	}
     
@@ -94,12 +109,12 @@ public final class BootstrappingDecayingRunningAverage implements RunningAverage
          */
 	public synchronized void report(double d) {
 		if(d < min) {
-			if(Logger.shouldLog(LogLevel.DEBUG, this))
+			if(logDEBUG)
 				Logger.debug(this, "Too low: "+d, new Exception("debug"));
 			d = min;
 		}
 		if(d > max) {
-			if(Logger.shouldLog(LogLevel.DEBUG, this))
+			if(logDEBUG)
 				Logger.debug(this, "Too high: "+d, new Exception("debug"));
 			d = max;
 		}

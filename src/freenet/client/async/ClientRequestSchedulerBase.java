@@ -60,6 +60,7 @@ abstract class ClientRequestSchedulerBase {
 
 	final boolean isInsertScheduler;
 	final boolean isSSKScheduler;
+	final boolean isRTScheduler;
 	
 	/**
 	 * Structure:
@@ -85,17 +86,20 @@ abstract class ClientRequestSchedulerBase {
 	abstract boolean persistent();
 
 	/**
+
 	 * zero arg c'tor for db4o on jamvm
 	 */
 	protected ClientRequestSchedulerBase() {
 		priorities = null;
 		isSSKScheduler = false;
 		isInsertScheduler = false;
+		isRTScheduler = false;
 	}
 
-	protected ClientRequestSchedulerBase(boolean forInserts, boolean forSSKs, RandomSource random) {
+	protected ClientRequestSchedulerBase(boolean forInserts, boolean forSSKs, boolean forRT, RandomSource random) {
 		this.isInsertScheduler = forInserts;
 		this.isSSKScheduler = forSSKs;
+		this.isRTScheduler = forRT;
 		keyListeners = new ArrayList<KeyListener>();
 		priorities = null;
 		newPriorities = new SectoredRandomGrabArray[RequestStarter.NUMBER_OF_PRIORITY_CLASSES];
@@ -151,32 +155,35 @@ abstract class ClientRequestSchedulerBase {
 		}
 	}
 	
-	synchronized void addToGrabArray(short priorityClass, RequestClient client, ClientRequester cr, SendableRequest req, RandomSource random, ObjectContainer container, ClientContext context) {
+	void addToGrabArray(short priorityClass, RequestClient client, ClientRequester cr, SendableRequest req, RandomSource random, ObjectContainer container, ClientContext context) {
 		if((priorityClass > RequestStarter.MINIMUM_PRIORITY_CLASS) || (priorityClass < RequestStarter.MAXIMUM_PRIORITY_CLASS))
 			throw new IllegalStateException("Invalid priority: "+priorityClass+" - range is "+RequestStarter.MAXIMUM_PRIORITY_CLASS+" (most important) to "+RequestStarter.MINIMUM_PRIORITY_CLASS+" (least important)");
 		// Client
-		SectoredRandomGrabArray clientGrabber = (SectoredRandomGrabArray) newPriorities[priorityClass];
-		if(persistent()) container.activate(clientGrabber, 1);
-		if(clientGrabber == null) {
-			clientGrabber = new SectoredRandomGrabArray(persistent(), container, null);
-			newPriorities[priorityClass] = clientGrabber;
-			if(persistent()) container.store(this);
-			if(logMINOR) Logger.minor(this, "Registering client tracker for priority "+priorityClass+" : "+clientGrabber);
-		}
-		// SectoredRandomGrabArrayWithInt and lower down have hierarchical locking and auto-remove.
-		// To avoid a race condition it is essential to mirror that here.
-		synchronized(clientGrabber) {
-			// Request
-			SectoredRandomGrabArrayWithObject requestGrabber = (SectoredRandomGrabArrayWithObject) clientGrabber.getGrabber(client);
-			if(persistent()) container.activate(requestGrabber, 1);
-			if(requestGrabber == null) {
-				requestGrabber = new SectoredRandomGrabArrayWithObject(client, persistent(), container, clientGrabber);
-				if(logMINOR)
-					Logger.minor(this, "Creating new grabber: "+requestGrabber+" for "+client+" from "+clientGrabber+" : prio="+priorityClass);
-				clientGrabber.addGrabber(client, requestGrabber, container, context);
-				context.cooldownTracker.clearCachedWakeup(clientGrabber, persistent(), container);
+		synchronized(this) {
+			SectoredRandomGrabArray clientGrabber = (SectoredRandomGrabArray) newPriorities[priorityClass];
+			if(persistent()) container.activate(clientGrabber, 1);
+			if(clientGrabber == null) {
+				clientGrabber = new SectoredRandomGrabArray(persistent(), container, null);
+				newPriorities[priorityClass] = clientGrabber;
+				if(persistent()) container.store(this);
+				if(logMINOR) Logger.minor(this, "Registering client tracker for priority "+priorityClass+" : "+clientGrabber);
 			}
-			requestGrabber.add(cr, req, container, context);
+			// SectoredRandomGrabArrayWithInt and lower down have hierarchical locking and auto-remove.
+			// To avoid a race condition it is essential to mirror that here.
+			synchronized(clientGrabber) {
+				// Request
+				SectoredRandomGrabArrayWithObject requestGrabber = (SectoredRandomGrabArrayWithObject) clientGrabber.getGrabber(client);
+				if(persistent()) container.activate(requestGrabber, 1);
+				if(requestGrabber == null) {
+					requestGrabber = new SectoredRandomGrabArrayWithObject(client, persistent(), container, clientGrabber);
+					if(logMINOR)
+						Logger.minor(this, "Creating new grabber: "+requestGrabber+" for "+client+" from "+clientGrabber+" : prio="+priorityClass);
+					clientGrabber.addGrabber(client, requestGrabber, container, context);
+					// FIXME unnecessary as it knows its parent and addGrabber() will call it???
+					context.cooldownTracker.clearCachedWakeup(clientGrabber, persistent(), container);
+				}
+				requestGrabber.add(cr, req, container, context);
+			}
 		}
 		sched.wakeStarter();
 	}
@@ -227,6 +234,14 @@ abstract class ClientRequestSchedulerBase {
 			// FIXME call getSendableRequests() and do the sorting in ClientRequestScheduler.reregisterAll().
 			if(isInsert != isInsertScheduler || req.isSSK() != isSSKScheduler) {
 				if(persistent()) container.deactivate(req, 1);
+				continue;
+			}
+			if(req.isStorageBroken(container)) {
+				Logger.error(this, "Broken request while changing priority: "+req);
+				continue;
+			}
+			if(req.persistent() != persistent()) {
+				Logger.error(this, "Request persistence is "+req.persistent()+" but scheduler's is "+persistent()+" on "+this+" for "+req);
 				continue;
 			}
 			// Unregister from the RGA's, but keep the pendingKeys and cooldown queue data.

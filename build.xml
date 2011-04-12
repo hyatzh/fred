@@ -12,7 +12,7 @@
 
 	<!-- Give user a chance to override without editing this file
 			(and without typing -D each time it compiles it) -->
-	<property file="build.properties" />
+	<property file="build-foe.properties" />
 
 
 	<!-- set global properties for this build -->
@@ -84,7 +84,7 @@
 		<available file="${GWT.lib.user}" property="GWT.lib.user.present"/>
 		<echo level="verbose">gwt-user.jar present:${GWT.lib.user.present}</echo>
 	</target>
-	
+
 	<target name="get-GWT-lib-dev" depends="env" unless="GWT.lib.dev.present">
 		<mkdir dir="${GWT.lib}"/>
 		<get src="http://localhost/gwt-dev.jar" 
@@ -93,7 +93,7 @@
 			usetimestamp="true"/>
 		<property name="GWT.lib.dev.present" value="true"/>
 	</target>
-	
+
 	<target name="get-GWT-lib-user" depends="env" unless="GWT.lib.user.present">
 		<mkdir dir="${GWT.lib}"/>
 		<get src="http://localhost/gwt-user.jar" 
@@ -102,12 +102,12 @@
 			usetimestamp="true"/>
 		<property name="GWT.lib.user.present" value="true"/>
 	</target>
-	
+
 	<target name="get-GWT-libs" unless="generatedjs.present">
 	    <antcall target="get-GWT-lib-dev"/>
 	    <antcall target="get-GWT-lib-user"/>
 	</target>
-	
+
 	<target name="generate-js" depends="env,get-GWT-libs" unless="generatedjs.present">
 		<ant antfile="build.xml" dir="generator/js"/>
 	</target>

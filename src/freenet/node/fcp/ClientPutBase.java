@@ -20,7 +20,9 @@ import freenet.client.events.StartedCompressionEvent;
 import freenet.keys.FreenetURI;
 import freenet.keys.InsertableClientSSK;
 import freenet.node.Node;
+import freenet.node.fcp.ClientPut.COMPRESS_STATE;
 import freenet.support.Fields;
+import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
 import freenet.support.SimpleFieldSet;
 import freenet.support.Logger.LogLevel;
@@ -47,7 +49,7 @@ public abstract class ClientPutBase extends ClientRequest implements ClientPutCa
 	/** If the request failed, how did it fail? PutFailedMessage is the most
 	 * convenient way to store this (InsertException has a stack trace!).
 	 */
-	private PutFailedMessage putFailedMessage;
+	protected PutFailedMessage putFailedMessage;
 	/** URI generated for the insert. */
 	protected FreenetURI generatedURI;
 	// This could be a SimpleProgress, or it could be started/finished compression.
@@ -63,6 +65,16 @@ public abstract class ClientPutBase extends ClientRequest implements ClientPutCa
 
 	public final static String SALT = "Salt";
 	public final static String FILE_HASH = "FileHash";
+	
+	private static volatile boolean logMINOR;
+	static {
+		Logger.registerLogThresholdCallback(new LogThresholdCallback(){
+			@Override
+			public void shouldUpdate(){
+				logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
+			}
+		});
+	}
 
 	/**
 	 * zero arg c'tor for db4o on jamvm
@@ -76,8 +88,8 @@ public abstract class ClientPutBase extends ClientRequest implements ClientPutCa
 
 	public ClientPutBase(FreenetURI uri, String identifier, int verbosity, String charset, 
 			FCPConnectionHandler handler, short priorityClass, short persistenceType, String clientToken, boolean global,
-			boolean getCHKOnly, boolean dontCompress, boolean localRequestOnly, int maxRetries, boolean earlyEncode, boolean canWriteClientCache, boolean forkOnCacheable, String compressorDescriptor, int extraInsertsSingleBlock, int extraInsertsSplitfileHeader, InsertContext.CompatibilityMode compatibilityMode, FCPServer server, ObjectContainer container) throws MalformedURLException {
-		super(uri, identifier, verbosity, charset, handler, priorityClass, persistenceType, clientToken, global, container);
+			boolean getCHKOnly, boolean dontCompress, boolean localRequestOnly, int maxRetries, boolean earlyEncode, boolean canWriteClientCache, boolean forkOnCacheable, String compressorDescriptor, int extraInsertsSingleBlock, int extraInsertsSplitfileHeader, boolean realTimeFlag, InsertContext.CompatibilityMode compatibilityMode, FCPServer server, ObjectContainer container) throws MalformedURLException {
+		super(uri, identifier, verbosity, charset, handler, priorityClass, persistenceType, realTimeFlag, clientToken, global, container);
 		this.getCHKOnly = getCHKOnly;
 		ctx = new InsertContext(server.defaultInsertContext, new SimpleEventProducer());
 		ctx.dontCompress = dontCompress;
@@ -107,8 +119,8 @@ public abstract class ClientPutBase extends ClientRequest implements ClientPutCa
 
 	public ClientPutBase(FreenetURI uri, String identifier, int verbosity, String charset,
 			FCPConnectionHandler handler, FCPClient client, short priorityClass, short persistenceType, String clientToken,
-			boolean global, boolean getCHKOnly, boolean dontCompress, int maxRetries, boolean earlyEncode, boolean canWriteClientCache, boolean forkOnCacheable, boolean localRequestOnly, int extraInsertsSingleBlock, int extraInsertsSplitfileHeader, String compressorDescriptor, InsertContext.CompatibilityMode compatMode, FCPServer server, ObjectContainer container) throws MalformedURLException {
-		super(uri, identifier, verbosity, charset, handler, client, priorityClass, persistenceType, clientToken, global, container);
+			boolean global, boolean getCHKOnly, boolean dontCompress, int maxRetries, boolean earlyEncode, boolean canWriteClientCache, boolean forkOnCacheable, boolean localRequestOnly, int extraInsertsSingleBlock, int extraInsertsSplitfileHeader, boolean realTimeFlag, String compressorDescriptor, InsertContext.CompatibilityMode compatMode, FCPServer server, ObjectContainer container) throws MalformedURLException {
+		super(uri, identifier, verbosity, charset, handler, client, priorityClass, persistenceType, realTimeFlag, clientToken, global, container);
 		this.getCHKOnly = getCHKOnly;
 		ctx = new InsertContext(server.defaultInsertContext, new SimpleEventProducer());
 		ctx.dontCompress = dontCompress;
@@ -123,38 +135,6 @@ public abstract class ClientPutBase extends ClientRequest implements ClientPutCa
 		ctx.setCompatibilityMode(compatMode);
 		this.earlyEncode = earlyEncode;
 		publicURI = getPublicURI(this.uri);
-	}
-
-	public ClientPutBase(SimpleFieldSet fs, FCPClient client2, FCPServer server) throws MalformedURLException {
-		super(fs, client2);
-		publicURI = getPublicURI(this.uri);
-		getCHKOnly = Fields.stringToBool(fs.get("CHKOnly"), false);
-		boolean dontCompress = Fields.stringToBool(fs.get("DontCompress"), false);
-		int maxRetries = Integer.parseInt(fs.get("MaxRetries"));
-		clientToken = fs.get("ClientToken");
-		finished = Fields.stringToBool(fs.get("Finished"), false);
-		//finished = false;
-		succeeded = Fields.stringToBool(fs.get("Succeeded"), false);
-		ctx = new InsertContext(server.defaultInsertContext, new SimpleEventProducer());
-		ctx.dontCompress = dontCompress;
-		ctx.eventProducer.addEventListener(this);
-		ctx.maxInsertRetries = maxRetries;
-		ctx.compressorDescriptor = fs.get("Codecs");
-		String genURI = fs.get("GeneratedURI");
-		if(genURI != null)
-			generatedURI = new FreenetURI(genURI);
-		if(finished) {
-			String ctime = fs.get("CompletionTime");
-			if(ctime != null)
-				completionTime = Long.parseLong(ctime);
-			if(!succeeded)
-				putFailedMessage = new PutFailedMessage(fs.subset("PutFailed"), false);
-		}
-		earlyEncode = Fields.stringToBool(fs.get("EarlyEncode"), false);
-		if(fs.get("ForkOnCacheable") != null)
-			ctx.forkOnCacheable = fs.getBoolean("ForkOnCacheable", false);
-		else
-			ctx.forkOnCacheable = Node.FORK_ON_CACHEABLE_DEFAULT;
 	}
 
 	private FreenetURI getPublicURI(FreenetURI uri) throws MalformedURLException {
@@ -221,7 +201,7 @@ public abstract class ClientPutBase extends ClientRequest implements ClientPutCa
 				if(!uri.equals(generatedURI))
 					Logger.error(this, "onGeneratedURI("+uri+ ',' +state+") but already set generatedURI to "+generatedURI);
 				else
-					if(Logger.shouldLog(LogLevel.MINOR, this)) Logger.minor(this, "onGeneratedURI() twice with same value: "+generatedURI+" -> "+uri);
+					if(logMINOR) Logger.minor(this, "onGeneratedURI() twice with same value: "+generatedURI+" -> "+uri);
 			} else {
 				generatedURI = uri;
 			}
@@ -229,6 +209,25 @@ public abstract class ClientPutBase extends ClientRequest implements ClientPutCa
 		if(persistenceType == PERSIST_FOREVER)
 			container.store(this);
 		trySendGeneratedURIMessage(null, container);
+		if(client != null) {
+			RequestStatusCache cache = client.getRequestStatusCache();
+			if(cache != null) {
+				FreenetURI u = uri;
+				if(persistenceType == PERSIST_FOREVER) u = u.clone();
+				cache.gotFinalURI(identifier, uri);
+			}
+		}
+	}
+	
+	public FreenetURI getGeneratedURI(ObjectContainer container) {
+		if(generatedURI == null) return null;
+		if(persistenceType == PERSIST_FOREVER) {
+			container.activate(generatedURI, Integer.MAX_VALUE);
+			FreenetURI ret = generatedURI.clone();
+			container.deactivate(generatedURI, 1);
+			return ret;
+		} else
+			return generatedURI;
 	}
 
 	@Override
@@ -311,6 +310,12 @@ public abstract class ClientPutBase extends ClientRequest implements ClientPutCa
 					new SimpleProgressMessage(identifier, global, (SplitfileProgressEvent)ce);
 				lastActivity = System.currentTimeMillis();
 				trySendProgressMessage(progress, VERBOSITY_SPLITFILE_PROGRESS, null, container, context);
+			}
+			if(client != null) {
+				RequestStatusCache cache = client.getRequestStatusCache();
+				if(cache != null) {
+					cache.updateStatus(identifier, (SplitfileProgressEvent)ce);
+				}
 			}
 		} else if(ce instanceof StartedCompressionEvent) {
 			if((verbosity & VERBOSITY_COMPRESSION_START_END) == VERBOSITY_COMPRESSION_START_END) {
@@ -573,6 +578,14 @@ public abstract class ClientPutBase extends ClientRequest implements ClientPutCa
 		return s;
 	}
 
+	public PutFailedMessage getFailureMessage(ObjectContainer container) {
+		if(putFailedMessage == null)
+			return null;
+		if(persistenceType == PERSIST_FOREVER)
+			container.activate(putFailedMessage, 5);
+		return putFailedMessage;
+	}
+	
 	public void setVarsRestart(ObjectContainer container) {
 		PutFailedMessage pfm;
 		FCPMessage progress;
@@ -596,5 +609,5 @@ public abstract class ClientPutBase extends ClientRequest implements ClientPutCa
 			container.store(this);
 		}
 	}
-	
+
 }

@@ -19,8 +19,9 @@ import freenet.client.async.DBJobRunner;
 import freenet.client.async.DatabaseDisabledException;
 import freenet.crypt.RandomSource;
 import freenet.keys.CHKBlock;
-import freenet.node.Ticker;
+import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
+import freenet.support.Ticker;
 import freenet.support.Logger.LogLevel;
 import freenet.support.api.Bucket;
 import freenet.support.api.BucketFactory;
@@ -70,6 +71,16 @@ public class PersistentTempBucketFactory implements BucketFactory, PersistentFil
 	/** Don't store the bucketsToFree unless it's been modified since we last stored it. */
 	private transient boolean modifiedBucketsToFree;
 
+        private static volatile boolean logMINOR;
+	static {
+		Logger.registerLogThresholdCallback(new LogThresholdCallback(){
+			@Override
+			public void shouldUpdate(){
+				logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
+			}
+		});
+	}
+
 	/**
 	 * zero arg c'tor for db4o on jamvm
 	 */
@@ -92,7 +103,6 @@ public class PersistentTempBucketFactory implements BucketFactory, PersistentFil
 	 * @throws IOException If we are unable to read the directory, etc.
 	 */
 	public PersistentTempBucketFactory(File dir, final String prefix, RandomSource strongPRNG, Random weakPRNG, boolean encrypt, long nodeDBHandle) throws IOException {
-		boolean logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 		blobFactory = new PersistentBlobTempBucketFactory(BLOB_SIZE, nodeDBHandle, new File(dir, "persistent-blob.tmp"));
 		this.strongPRNG = strongPRNG;
 		this.nodeDBHandle = nodeDBHandle;

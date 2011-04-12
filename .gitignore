@@ -1,6 +1,6 @@
 /bin
 /build
-/build-test
+/dist
 /freenet-*
 /javadoc
 /junitvmwatcher*
@@ -12,5 +12,5 @@
 *.iml
 *.ipr
 *.iws
-/build.properties
 *~
+/override.properties

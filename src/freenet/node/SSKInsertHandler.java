@@ -52,10 +52,11 @@ public class SSKInsertHandler implements PrioRunnable, ByteCounter {
 	private final boolean forkOnCacheable;
 	private final boolean preferInsert;
 	private final boolean ignoreLowBackoff;
+	private final boolean realTimeFlag;
 
 	private boolean collided = false;
     
-    SSKInsertHandler(NodeSSK key, byte[] data, byte[] headers, short htl, PeerNode source, long id, Node node, long startTime, InsertTag tag, boolean canWriteDatastore, boolean forkOnCacheable, boolean preferInsert, boolean ignoreLowBackoff) {
+    SSKInsertHandler(NodeSSK key, byte[] data, byte[] headers, short htl, PeerNode source, long id, Node node, long startTime, InsertTag tag, boolean canWriteDatastore, boolean forkOnCacheable, boolean preferInsert, boolean ignoreLowBackoff, boolean realTimeFlag) {
         this.node = node;
         this.uid = id;
         this.source = source;
@@ -74,6 +75,7 @@ public class SSKInsertHandler implements PrioRunnable, ByteCounter {
         this.forkOnCacheable = forkOnCacheable;
         this.preferInsert = preferInsert;
         this.ignoreLowBackoff = ignoreLowBackoff;
+        this.realTimeFlag = realTimeFlag;
     }
     
     @Override
@@ -91,7 +93,7 @@ public class SSKInsertHandler implements PrioRunnable, ByteCounter {
             Logger.error(this, "Caught "+t, t);
         } finally {
             if(logMINOR) Logger.minor(this, "Exiting InsertHandler.run() for "+uid);
-            node.unlockUID(uid, true, true, false, false, false, tag);
+            tag.unlockHandler();
         }
     }
 
@@ -112,6 +114,14 @@ public class SSKInsertHandler implements PrioRunnable, ByteCounter {
 				Message msg = node.usm.waitFor(mf, this);
 				if(msg == null) {
 					Logger.normal(this, "Failed to receive FNPSSKInsertRequestHeaders for "+uid);
+					Message failed = DMT.createFNPDataInsertRejected(uid, DMT.DATA_INSERT_REJECTED_RECEIVE_FAILED);
+					try {
+						source.sendSync(failed, this, realTimeFlag);
+					} catch (NotConnectedException e) {
+						// Ignore
+					} catch (SyncSendWaitedTooLongException e) {
+						// Ignore
+					}
 					return;
 				}
 				headers = ((ShortBuffer)msg.getObject(DMT.BLOCK_HEADERS)).getData();
@@ -127,6 +137,14 @@ public class SSKInsertHandler implements PrioRunnable, ByteCounter {
 				Message msg = node.usm.waitFor(mf, this);
 				if(msg == null) {
 					Logger.normal(this, "Failed to receive FNPSSKInsertRequestData for "+uid);
+					Message failed = DMT.createFNPDataInsertRejected(uid, DMT.DATA_INSERT_REJECTED_RECEIVE_FAILED);
+					try {
+						source.sendSync(failed, this, realTimeFlag);
+					} catch (NotConnectedException e) {
+						// Ignore
+					} catch (SyncSendWaitedTooLongException e) {
+						// Ignore
+					}
 					return;
 				}
 				data = ((ShortBuffer)msg.getObject(DMT.DATA)).getData();
@@ -164,8 +182,10 @@ public class SSKInsertHandler implements PrioRunnable, ByteCounter {
 					Logger.error(this, "Invalid pubkey from "+source+" on "+uid);
 					Message msg = DMT.createFNPDataInsertRejected(uid, DMT.DATA_INSERT_REJECTED_SSK_ERROR);
 					try {
-						source.sendSync(msg, this);
+						source.sendSync(msg, this, realTimeFlag);
 					} catch (NotConnectedException ee) {
+						// Ignore
+					} catch (SyncSendWaitedTooLongException ee) {
 						// Ignore
 					}
 					return;
@@ -183,8 +203,10 @@ public class SSKInsertHandler implements PrioRunnable, ByteCounter {
 			Logger.error(this, "Invalid SSK from "+source, e1);
 			Message msg = DMT.createFNPDataInsertRejected(uid, DMT.DATA_INSERT_REJECTED_SSK_ERROR);
 			try {
-				source.sendSync(msg, this);
+				source.sendSync(msg, this, realTimeFlag);
 			} catch (NotConnectedException e) {
+				// Ignore
+			} catch (SyncSendWaitedTooLongException e) {
 				// Ignore
 			}
 			return;
@@ -194,7 +216,7 @@ public class SSKInsertHandler implements PrioRunnable, ByteCounter {
 		
 		if((storedBlock != null) && !storedBlock.equals(block)) {
 			try {
-				RequestHandler.sendSSK(storedBlock.getRawHeaders(), storedBlock.getRawData(), false, pubKey, source, uid, this);
+				RequestHandler.sendSSK(storedBlock.getRawHeaders(), storedBlock.getRawData(), false, pubKey, source, uid, this, realTimeFlag);
 			} catch (NotConnectedException e1) {
 				if(logMINOR) Logger.minor(this, "Lost connection to source on "+uid);
 				return;
@@ -204,26 +226,17 @@ public class SSKInsertHandler implements PrioRunnable, ByteCounter {
 			} catch (PeerRestartedException e) {
 				if(logMINOR) Logger.minor(this, "Source restarted on "+uid);
 				return;
+			} catch (SyncSendWaitedTooLongException e) {
+				Logger.error(this, "Took too long to send ssk datareply to "+uid);
+				return;
 			}
 			block = storedBlock;
 		}
 		
 		if(logMINOR) Logger.minor(this, "Got block for "+key+" for "+uid);
 		
-        if(htl == 0) {
-        	Message msg = DMT.createFNPInsertReply(uid);
-        	try {
-				source.sendSync(msg, this);
-			} catch (NotConnectedException e) {
-				// Ignore
-			}
-			canCommit = true;
-            finish(SSKInsertSender.SUCCESS);
-            return;
-        }
-        
         if(htl > 0)
-            sender = node.makeInsertSender(block, htl, uid, source, false, false, canWriteDatastore, forkOnCacheable, preferInsert, ignoreLowBackoff);
+            sender = node.makeInsertSender(block, htl, uid, tag, source, false, false, canWriteDatastore, forkOnCacheable, preferInsert, ignoreLowBackoff, realTimeFlag);
         
         boolean receivedRejectedOverload = false;
         
@@ -240,9 +253,10 @@ public class SSKInsertHandler implements PrioRunnable, ByteCounter {
             if((!receivedRejectedOverload) && sender.receivedRejectedOverload()) {
             	receivedRejectedOverload = true;
             	// Forward it
-            	Message m = DMT.createFNPRejectedOverload(uid, false);
+            	// Does not need to be sent synchronously since is non-terminal.
+            	Message m = DMT.createFNPRejectedOverload(uid, false, true, realTimeFlag);
             	try {
-					source.sendSync(m, this);
+					source.sendAsync(m, null, this);
 				} catch (NotConnectedException e) {
 					if(logMINOR) Logger.minor(this, "Lost connection to source");
 					return;
@@ -261,7 +275,7 @@ public class SSKInsertHandler implements PrioRunnable, ByteCounter {
 					throw new Error("Impossible: " + e1, e1);
 				}
 				try {
-					RequestHandler.sendSSK(headers, data, false, pubKey, source, uid, this);
+					RequestHandler.sendSSK(headers, data, false, pubKey, source, uid, this, realTimeFlag);
 				} catch (NotConnectedException e1) {
 					if(logMINOR) Logger.minor(this, "Lost connection to source on "+uid);
 					return;
@@ -270,6 +284,9 @@ public class SSKInsertHandler implements PrioRunnable, ByteCounter {
 					return;
 				} catch (PeerRestartedException e) {
 					Logger.error(this, "Peer restarted on "+uid);
+					return;
+				} catch (SyncSendWaitedTooLongException e) {
+					Logger.error(this, "Took too long to send ssk datareply to "+uid);
 					return;
 				}
             }
@@ -286,11 +303,14 @@ public class SSKInsertHandler implements PrioRunnable, ByteCounter {
             if((status == SSKInsertSender.TIMED_OUT) ||
             		(status == SSKInsertSender.GENERATED_REJECTED_OVERLOAD) ||
             		(status == SSKInsertSender.INTERNAL_ERROR)) {
-                Message msg = DMT.createFNPRejectedOverload(uid, true);
+                Message msg = DMT.createFNPRejectedOverload(uid, true, true, realTimeFlag);
                 try {
-					source.sendSync(msg, this);
+					source.sendSync(msg, this, realTimeFlag);
 				} catch (NotConnectedException e) {
 					if(logMINOR) Logger.minor(this, "Lost connection to source");
+					return;
+				} catch (SyncSendWaitedTooLongException e) {
+					Logger.error(this, "Took too long to send "+msg+" to "+source);
 					return;
 				}
                 // Might as well store it anyway.
@@ -304,10 +324,12 @@ public class SSKInsertHandler implements PrioRunnable, ByteCounter {
             if((status == SSKInsertSender.ROUTE_NOT_FOUND) || (status == SSKInsertSender.ROUTE_REALLY_NOT_FOUND)) {
                 Message msg = DMT.createFNPRouteNotFound(uid, sender.getHTL());
                 try {
-					source.sendSync(msg, this);
+					source.sendSync(msg, this, realTimeFlag);
 				} catch (NotConnectedException e) {
 					if(logMINOR) Logger.minor(this, "Lost connection to source");
 					return;
+				} catch (SyncSendWaitedTooLongException e) {
+					Logger.error(this, "Took too long to send "+msg+" to source");
 				}
                 canCommit = true;
                 finish(status);
@@ -317,10 +339,12 @@ public class SSKInsertHandler implements PrioRunnable, ByteCounter {
             if(status == SSKInsertSender.SUCCESS) {
             	Message msg = DMT.createFNPInsertReply(uid);
             	try {
-					source.sendSync(msg, this);
+					source.sendSync(msg, this, realTimeFlag);
 				} catch (NotConnectedException e) {
 					if(logMINOR) Logger.minor(this, "Lost connection to source");
 					return;
+				} catch (SyncSendWaitedTooLongException e) {
+					Logger.error(this, "Took too long to send "+msg+" to "+source);
 				}
                 canCommit = true;
                 finish(status);
@@ -329,11 +353,13 @@ public class SSKInsertHandler implements PrioRunnable, ByteCounter {
             
             // Otherwise...?
             Logger.error(this, "Unknown status code: "+sender.getStatusString());
-            Message msg = DMT.createFNPRejectedOverload(uid, true);
+            Message msg = DMT.createFNPRejectedOverload(uid, true, true, realTimeFlag);
             try {
-				source.sendSync(msg, this);
+				source.sendSync(msg, this, realTimeFlag);
 			} catch (NotConnectedException e) {
 				// Ignore
+			} catch (SyncSendWaitedTooLongException e) {
+				Logger.error(this, "Took too long to send "+msg+" to "+source);
 			}
             finish(status);
             return;

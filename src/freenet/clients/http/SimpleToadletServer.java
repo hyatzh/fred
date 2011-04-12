@@ -10,11 +10,13 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.LinkedList;
 
 import org.tanukisoftware.wrapper.WrapperManager;
 
+import freenet.clients.http.FProxyFetchInProgress.REFILTER_POLICY;
 import freenet.clients.http.PageMaker.THEME;
 import freenet.clients.http.bookmark.BookmarkManager;
 import freenet.clients.http.updateableelements.PushDataManager;
@@ -32,13 +34,15 @@ import freenet.node.Node;
 import freenet.node.NodeClientCore;
 import freenet.node.PrioRunnable;
 import freenet.node.SecurityLevelListener;
-import freenet.node.Ticker;
+import freenet.node.SecurityLevels.NETWORK_THREAT_LEVEL;
 import freenet.node.SecurityLevels.PHYSICAL_THREAT_LEVEL;
 import freenet.pluginmanager.FredPluginL10n;
 import freenet.support.Executor;
 import freenet.support.HTMLNode;
+import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
 import freenet.support.OOMHandler;
+import freenet.support.Ticker;
 import freenet.support.Logger.LogLevel;
 import freenet.support.api.BooleanCallback;
 import freenet.support.api.BucketFactory;
@@ -57,12 +61,16 @@ public final class SimpleToadletServer implements ToadletContainer, Runnable {
 	/** List of urlPrefix / Toadlet */ 
 	private final LinkedList<ToadletElement> toadlets;
 	private static class ToadletElement {
-		public ToadletElement(Toadlet t2, String urlPrefix) {
+		public ToadletElement(Toadlet t2, String urlPrefix, String menu, String name) {
 			t = t2;
 			prefix = urlPrefix;
+			this.menu = menu;
+			this.name = name;
 		}
 		Toadlet t;
 		String prefix;
+		String menu;
+		String name;
 	}
 
 	// Socket / Binding
@@ -105,11 +113,23 @@ public final class SimpleToadletServer implements ToadletContainer, Runnable {
 	private volatile boolean fproxyHasCompletedWizard;	// hmmm..
 	private volatile boolean disableProgressPage;
 	
+	private boolean finishedStartup;
+	
 	/** The PushDataManager handles all the pushing tasks*/
 	public PushDataManager pushDataManager; 
 	
 	/** The IntervalPusherManager handles interval pushing*/
 	public IntervalPusherManager intervalPushManager;
+
+        private static volatile boolean logMINOR;
+	static {
+		Logger.registerLogThresholdCallback(new LogThresholdCallback(){
+			@Override
+			public void shouldUpdate(){
+				logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
+			}
+		});
+	}
 	
 	// Config Callbacks
 	private class FProxySSLCallback extends BooleanCallback  {
@@ -329,6 +349,33 @@ public final class SimpleToadletServer implements ToadletContainer, Runnable {
 	}
 	
 	private boolean haveCalledFProxy = false;
+	
+	// FIXME factor this out to a global helper class somehow?
+	
+	private class ReFilterCallback extends StringCallback implements EnumerableOptionCallback {
+
+		public String[] getPossibleValues() {
+			REFILTER_POLICY[] possible = REFILTER_POLICY.values();
+			String[] ret = new String[possible.length];
+			for(int i=0;i<possible.length;i++)
+				ret[i] = possible[i].name();
+			return ret;
+		}
+
+		@Override
+		public String get() {
+			return refilterPolicy.name();
+		}
+
+		@Override
+		public void set(String val) throws InvalidConfigValueException,
+				NodeNeedRestartException {
+			refilterPolicy = REFILTER_POLICY.valueOf(val);
+		}
+		
+	};
+	
+	private final ReFilterCallback refilterPolicyCallback = new ReFilterCallback();
 	
 	public void createFproxy() {
 		synchronized(this) {
@@ -573,6 +620,12 @@ public final class SimpleToadletServer implements ToadletContainer, Runnable {
 		});
 		doRobots = fproxyConfig.getBoolean("doRobots");
 		
+		fproxyConfig.register("refilterPolicy", "RE_FILTER", 
+				configItemOrder++, true, false, "SimpleToadletServer.refilterPolicy", "SimpleToadletServer.refilterPolicyLong", refilterPolicyCallback);
+		
+		this.refilterPolicy = REFILTER_POLICY.valueOf(fproxyConfig.getString("refilterPolicy"));
+		
+		// Network seclevel not physical seclevel because bad filtering can cause network level anonymity breaches.
 		SimpleToadletServer.isPanicButtonToBeShown = fproxyConfig.getBoolean("showPanicButton");
 		SimpleToadletServer.noConfirmPanic = fproxyConfig.getBoolean("noConfirmPanic");
 		
@@ -658,6 +711,21 @@ public final class SimpleToadletServer implements ToadletContainer, Runnable {
 	}
 	
 	public void finishStart() {
+		core.node.securityLevels.addNetworkThreatLevelListener(new SecurityLevelListener<NETWORK_THREAT_LEVEL>() {
+
+			public void onChange(NETWORK_THREAT_LEVEL oldLevel,
+					NETWORK_THREAT_LEVEL newLevel) {
+				// At LOW, we do ACCEPT_OLD.
+				// Otherwise we do RE_FILTER.
+				// But we don't change it unless it changes from LOW to not LOW.
+				if(newLevel == NETWORK_THREAT_LEVEL.LOW && newLevel != oldLevel) {
+					refilterPolicy = REFILTER_POLICY.ACCEPT_OLD;
+				} else if(oldLevel == NETWORK_THREAT_LEVEL.LOW && newLevel != oldLevel) {
+					refilterPolicy = REFILTER_POLICY.RE_FILTER;
+				}
+			}
+			
+		});
 		core.node.securityLevels.addPhysicalThreatLevelListener(new SecurityLevelListener<PHYSICAL_THREAT_LEVEL> () {
 
 			public void onChange(PHYSICAL_THREAT_LEVEL oldLevel, PHYSICAL_THREAT_LEVEL newLevel) {
@@ -669,6 +737,9 @@ public final class SimpleToadletServer implements ToadletContainer, Runnable {
 			}
 			
 		});
+		synchronized(this) {
+			finishedStartup = true;
+		}
 	}
 	
 	public void register(Toadlet t, String menu, String urlPrefix, boolean atFront, boolean fullOnly) {
@@ -680,11 +751,11 @@ public final class SimpleToadletServer implements ToadletContainer, Runnable {
 	}
 	
 	public void register(Toadlet t, String menu, String urlPrefix, boolean atFront, String name, String title, boolean fullOnly, LinkEnabledCallback cb, FredPluginL10n l10n) {
-		ToadletElement te = new ToadletElement(t, urlPrefix);
+		ToadletElement te = new ToadletElement(t, urlPrefix, menu, name);
 		if(atFront) toadlets.addFirst(te);
 		else toadlets.addLast(te);
 		t.container = this;
-		if (name != null) {
+		if (menu != null && name != null) {
 			pageMaker.addNavigationLink(menu, urlPrefix, name, title, fullOnly, cb, l10n);
 		}
 	}
@@ -698,6 +769,9 @@ public final class SimpleToadletServer implements ToadletContainer, Runnable {
 			ToadletElement e = i.next();
 			if(e.t == t) {
 				i.remove();
+				if(e.menu != null && e.name != null) {
+					pageMaker.removeNavigationLink(e.menu, e.name);
+				}
 				return;
 			}
 		}
@@ -758,8 +832,11 @@ public final class SimpleToadletServer implements ToadletContainer, Runnable {
 		} catch (SocketException e1) {
 			Logger.error(this, "Could not set so-timeout to 500ms; on-the-fly disabling of the interface will not work");
 		}
+		boolean finishedStartup = false;
 		while(true) {
 			synchronized(this) {
+				if((!finishedStartup) && this.finishedStartup)
+					finishedStartup = true;
 				if(myThread == null) return;
 			}
 			Socket conn = networkInterface.accept();
@@ -767,9 +844,9 @@ public final class SimpleToadletServer implements ToadletContainer, Runnable {
 				return;
             if(conn == null)
                 continue; // timeout
-            if(Logger.shouldLog(LogLevel.MINOR, this))
+            if(logMINOR)
                 Logger.minor(this, "Accepted connection");
-            SocketHandler sh = new SocketHandler(conn);
+            SocketHandler sh = new SocketHandler(conn, finishedStartup);
             sh.start();
 		}
 	}
@@ -777,18 +854,22 @@ public final class SimpleToadletServer implements ToadletContainer, Runnable {
 	public class SocketHandler implements PrioRunnable {
 
 		Socket sock;
+		final boolean finishedStartup;
 		
-		public SocketHandler(Socket conn) {
+		public SocketHandler(Socket conn, boolean finishedStartup) {
 			this.sock = conn;
+			this.finishedStartup = finishedStartup;
 		}
 
 		void start() {
-			executor.execute(this, "HTTP socket handler@"+hashCode());
+			if(finishedStartup)
+				executor.execute(this, "HTTP socket handler@"+hashCode());
+			else
+				new Thread(this).start();
 		}
 		
 		public void run() {
 		    freenet.support.Logger.OSThread.logPID(this);
-			boolean logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 			if(logMINOR) Logger.minor(this, "Handling connection");
 			try {
 				ToadletContextImpl.handle(sock, SimpleToadletServer.this, pageMaker);
@@ -934,11 +1015,17 @@ public final class SimpleToadletServer implements ToadletContainer, Runnable {
 	}
 	
 	public Ticker getTicker(){
-		return core.node.ps;
+		return core.node.getTicker();
 	}
 	
 	public NodeClientCore getCore(){
 		return core;
+	}
+	
+	private REFILTER_POLICY refilterPolicy;
+
+	public REFILTER_POLICY getReFilterPolicy() {
+		return refilterPolicy;
 	}
 
 }

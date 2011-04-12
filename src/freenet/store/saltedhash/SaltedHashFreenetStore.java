@@ -26,7 +26,7 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-import org.spaceroots.mantissa.random.MersenneTwister;
+import freenet.support.math.MersenneTwister;
 import org.tanukisoftware.wrapper.WrapperManager;
 
 import freenet.crypt.BlockCipher;
@@ -38,7 +38,7 @@ import freenet.keys.SSKBlock;
 import freenet.l10n.NodeL10n;
 import freenet.node.FastRunnable;
 import freenet.node.SemiOrderedShutdownHook;
-import freenet.node.Ticker;
+import freenet.node.stats.StoreAccessStats;
 import freenet.node.useralerts.AbstractUserAlert;
 import freenet.node.useralerts.UserAlert;
 import freenet.node.useralerts.UserAlertManager;
@@ -52,6 +52,7 @@ import freenet.support.Fields;
 import freenet.support.HTMLNode;
 import freenet.support.HexUtil;
 import freenet.support.Logger;
+import freenet.support.Ticker;
 import freenet.support.Logger.LogLevel;
 import freenet.support.io.Closer;
 import freenet.support.io.FileUtil;
@@ -231,9 +232,11 @@ public class SaltedHashFreenetStore<T extends StorableBlock> implements FreenetS
 		if((smallerSize * (headerBlockLength + dataBlockLength + hdPadding) > curStoreFileSize) ||
 				(smallerSize * Entry.METADATA_LENGTH > curMetaFileSize)) {
 			// Pad it up to the minimum size before proceeding.
-			if(longStart)
+			if(longStart) {
 				setStoreFileSize(storeSize, true);
-			else
+				curStoreFileSize = hdRAF.length();
+				curMetaFileSize = metaRAF.length();
+			} else
 				return true;
 		}
 
@@ -258,7 +261,7 @@ public class SaltedHashFreenetStore<T extends StorableBlock> implements FreenetS
 		return false;
 	}
 
-	public T fetch(byte[] routingKey, byte[] fullKey, boolean dontPromote, boolean canReadClientCache, boolean canReadSlashdotCache, BlockMetadata meta) throws IOException {
+	public T fetch(byte[] routingKey, byte[] fullKey, boolean dontPromote, boolean canReadClientCache, boolean canReadSlashdotCache, boolean ignoreOldBlocks, BlockMetadata meta) throws IOException {
 		if (logMINOR)
 			Logger.minor(this, "Fetch " + HexUtil.bytesToHex(routingKey) + " for " + callback);
 
@@ -287,8 +290,14 @@ public class SaltedHashFreenetStore<T extends StorableBlock> implements FreenetS
 					return null;
 				}
 
-				if(meta != null && ((entry.flag & Entry.ENTRY_NEW_BLOCK) == Entry.ENTRY_NEW_BLOCK))
-					meta.setOldBlock();
+				if((entry.flag & Entry.ENTRY_NEW_BLOCK) == 0) {
+					if(ignoreOldBlocks) {
+						Logger.normal(this, "Ignoring old block");
+						return null;
+					}
+					if(meta != null)
+						meta.setOldBlock();
+				}
 
 				try {
 					T block = entry.getStorableBlock(routingKey, fullKey, canReadClientCache, canReadSlashdotCache, meta, null);
@@ -399,12 +408,28 @@ public class SaltedHashFreenetStore<T extends StorableBlock> implements FreenetS
 				if (oldEntry != null && !oldEntry.isFree()) {
 					long oldOffset = oldEntry.curOffset;
 					try {
-						if (!collisionPossible)
+						if (!collisionPossible) {
+							if((oldEntry.flag & Entry.ENTRY_NEW_BLOCK) == 0 && !isOldBlock) {
+								oldEntry = readEntry(oldEntry.curOffset, routingKey, true);
+								// Currently flagged as an old block
+								oldEntry.flag |= Entry.ENTRY_NEW_BLOCK;
+								if(logMINOR) Logger.minor(this, "Setting old block to new block");
+								oldEntry.storeSize = storeSize;
+								writeEntry(oldEntry, oldOffset);
+							}
 							return true;
+						}
 						oldEntry.setHD(readHD(oldOffset)); // read from disk
 						T oldBlock = oldEntry.getStorableBlock(routingKey, fullKey, false, false, null, (block instanceof SSKBlock) ? ((SSKBlock)block).getPubKey() : null);
 						if (block.equals(oldBlock)) {
 							if(logDEBUG) Logger.debug(this, "Block already stored");
+							if((oldEntry.flag & Entry.ENTRY_NEW_BLOCK) == 0 && !isOldBlock) {
+								// Currently flagged as an old block
+								oldEntry.flag |= Entry.ENTRY_NEW_BLOCK;
+								if(logMINOR) Logger.minor(this, "Setting old block to new block");
+								oldEntry.storeSize = storeSize;
+								writeEntry(oldEntry, oldOffset);
+							}
 							return false; // already in store
 						} else if (!overwrite) {
 							throw new KeyCollisionException();
@@ -441,7 +466,8 @@ public class SaltedHashFreenetStore<T extends StorableBlock> implements FreenetS
 							keyCount.incrementAndGet();
 							return true;
 						} else if(((flag & Entry.ENTRY_WRONG_STORE) == Entry.ENTRY_WRONG_STORE)) {
-							firstWrongStoreIndex = i;
+							if (wrongStoreCount == 0)
+								firstWrongStoreIndex = i;
 							wrongStoreCount++;
 						}
 					}
@@ -456,45 +482,31 @@ public class SaltedHashFreenetStore<T extends StorableBlock> implements FreenetS
 					}
 				}
 
-				boolean clobberWrongStore = true;
-				if(firstWrongStoreIndex == -1)
-					clobberWrongStore = false;
-				else {
-					if(wrongStore) {
-						// Distribute cache slot clobbering evenly between the two.
-						int a = OPTION_MAX_PROBE;
-						int b = wrongStoreCount;
-						clobberWrongStore = random.nextInt(a+b) > a;
-					}
-				}
-
-				// No free slot
-				if(clobberWrongStore) {
-					// Use the first wrong-store slot.
-					// This is acceptable if we are writing wrong-store and is certainly acceptable if we are not.
-					// write to free block
-					int i = firstWrongStoreIndex;
-					if (logDEBUG)
-						Logger.debug(this, "probing, write to i=" + i + ", offset=" + offset[i]);
-					bloomFilter.addKey(cipherManager.getDigestedKey(routingKey));
-					writeEntry(entry, offset[i]);
-					rebuildBloom = onWrite();
-					keyCount.incrementAndGet();
-					return true;
-				}
+				// There are no free slots for this Entry, so some slot will have to get overwritten.
+				int indexToOverwrite = -1;
 
 				if(wrongStore) {
-					if(logDEBUG) Logger.debug(this, "Won't overwrite non-wrong-store slots with wrong-store slots");
-					// We will not overwrite non-wrong-store slots with wrong-store ones.
-					return false;
+					// Distribute overwrites evenly between the right store and the wrong store.
+					int a = OPTION_MAX_PROBE;
+					int b = wrongStoreCount;
+					if(random.nextInt(a+b) < b)
+						// Allow the overwrite to happen in the wrong store.
+						indexToOverwrite = firstWrongStoreIndex;
+					else
+						// Force the overwrite to happen in the right store.
+						return false;
+				}
+				else {
+					// By default, overwrite offset[0] when not writing to wrong store.
+					indexToOverwrite = 0;
 				}
 
-				// no free blocks, overwrite the first one
+				// Do the overwriting.
 				if (logDEBUG)
-					Logger.debug(this, "collision, write to i=0, offset=" + offset[0]);
+					Logger.debug(this, "collision, write to i=" + indexToOverwrite + ", offset=" + offset[indexToOverwrite]);
 				bloomFilter.addKey(cipherManager.getDigestedKey(routingKey));
-				oldEntry = readEntry(offset[0], null, false);
-				writeEntry(entry, offset[0]);
+				oldEntry = readEntry(offset[indexToOverwrite], null, false);
+				writeEntry(entry, offset[indexToOverwrite]);
 				rebuildBloom = onWrite();
 				if (oldEntry.generation == generation)
 					bloomFilter.removeKey(oldEntry.getDigestedRoutingKey());
@@ -989,8 +1001,12 @@ public class SaltedHashFreenetStore<T extends StorableBlock> implements FreenetS
 	 *  +----+---------------+-------+-------+
 	 *  |0020| Est Key Count |  Gen  | Flags |
 	 *  +----+-------+-------+-------+-------+
-	 *  |0030|   K   |                       |
-	 *  +----+-------+-----------------------+
+	 *  |0030|   K   |      (reserved)       |
+	 *  +----+-------+-------+---------------+
+	 *  |0040|    writes     |     hits      |
+	 *  +----+---------------+---------------+
+	 *  |0050|    misses     | bloomFalsePos |
+	 *  +----+---------------+---------------+
 	 *
 	 *  Gen = Generation
 	 *    K = K for bloom filter
@@ -1056,6 +1072,7 @@ public class SaltedHashFreenetStore<T extends StorableBlock> implements FreenetS
 					cipherManager = new CipherManager(salt, diskSalt);
 
 					storeSize = raf.readLong();
+					if(storeSize <= 0) throw new IOException("Bogus datastore size");
 					prevStoreSize = raf.readLong();
 					keyCount.set(raf.readLong());
 					generation = raf.readInt();
@@ -1079,10 +1096,14 @@ public class SaltedHashFreenetStore<T extends StorableBlock> implements FreenetS
 						raf.readLong(); // reserved
 						long w = raf.readLong();
 						writes.set(w);
+						initialWrites = w;
 						Logger.normal(this, "Set writes to saved value "+w);
 						hits.set(raf.readLong());
+						initialHits = hits.get();
 						misses.set(raf.readLong());
+						initialMisses = misses.get();
 						bloomFalsePos.set(raf.readLong());
+						initialBloomFalsePos = bloomFalsePos.get();
 					} catch (EOFException e) {
 						// Ignore, back compatibility.
 					}
@@ -1885,6 +1906,18 @@ public class SaltedHashFreenetStore<T extends StorableBlock> implements FreenetS
 		for (int i = 0; i < OPTION_MAX_PROBE; i++) {
 			// h + 141 i^2 + 13 i
 			offsets[i] = ((keyValue + 141 * (i * i) + 13 * i) & Long.MAX_VALUE) % storeSize;
+			// Make sure the slots are all unique.
+			// Important for very small stores e.g. in unit tests.
+			while(true) {
+				boolean clear = true;
+				for(int j=0;j<i;j++) {
+					if(offsets[i] == offsets[j]) {
+						offsets[i] = (offsets[i] + 1) % storeSize;
+						clear = false;
+					}
+				}
+				if(clear || OPTION_MAX_PROBE > storeSize) break;
+			}
 		}
 
 		return offsets;
@@ -1896,6 +1929,11 @@ public class SaltedHashFreenetStore<T extends StorableBlock> implements FreenetS
 	private AtomicLong writes = new AtomicLong();
 	private AtomicLong keyCount = new AtomicLong();
 	private AtomicLong bloomFalsePos = new AtomicLong();
+	
+	private long initialHits;
+	private long initialMisses;
+	private long initialWrites;
+	private long initialBloomFalsePos;
 
 	public long hits() {
 		return hits.get();
@@ -1992,4 +2030,58 @@ public class SaltedHashFreenetStore<T extends StorableBlock> implements FreenetS
 	public String toString() {
 		return super.toString()+":"+name;
 	}
+	
+	public StoreAccessStats getSessionAccessStats() {
+		return new StoreAccessStats() {
+
+			@Override
+			public long hits() {
+				return hits.get() - initialHits;
+			}
+
+			@Override
+			public long misses() {
+				return misses.get() - initialMisses;
+			}
+
+			@Override
+			public long falsePos() {
+				return bloomFalsePos.get() - initialBloomFalsePos;
+			}
+
+			@Override
+			public long writes() {
+				return writes.get() - initialWrites;
+			}
+			
+		};
+	}
+
+	public StoreAccessStats getTotalAccessStats() {
+		return new StoreAccessStats() {
+
+			@Override
+			public long hits() {
+				return hits.get();
+			}
+
+			@Override
+			public long misses() {
+				return misses.get();
+			}
+
+			@Override
+			public long falsePos() {
+				return bloomFalsePos.get();
+			}
+
+			@Override
+			public long writes() {
+				return writes.get();
+			}
+			
+		};
+	}
+
+
 }

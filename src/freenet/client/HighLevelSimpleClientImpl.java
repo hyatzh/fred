@@ -51,6 +51,7 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 	private long curMaxTempLength;
 	private int curMaxMetadataLength;
 	private final RandomSource random;
+	private final boolean realTimeFlag;
 	static final int MAX_RECURSION = 10;
 	static final int MAX_ARCHIVE_RESTARTS = 2;
 	static final int MAX_ARCHIVE_LEVELS = 4;
@@ -87,12 +88,12 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 	 * FECCodec.standardOnionCheckBlocks will automatically reduce check blocks to compensate for more than half data blocks. */
 	public static final int SPLITFILE_BLOCKS_PER_SEGMENT = 136;
 	public static final int SPLITFILE_CHECK_BLOCKS_PER_SEGMENT = 128;
-	public static final int EXTRA_INSERTS_SINGLE_BLOCK = 0;
+	public static final int EXTRA_INSERTS_SINGLE_BLOCK = 2;
 	public static final int EXTRA_INSERTS_SPLITFILE_HEADER = 2;
 	/*Whether or not to filter fetched content*/
 	static final boolean FILTER_DATA = false;
 
-	public HighLevelSimpleClientImpl(NodeClientCore node, BucketFactory bf, RandomSource r, short priorityClass, boolean forceDontIgnoreTooManyPathComponents) {
+	public HighLevelSimpleClientImpl(NodeClientCore node, BucketFactory bf, RandomSource r, short priorityClass, boolean forceDontIgnoreTooManyPathComponents, boolean realTimeFlag) {
 		this.core = node;
 		this.priorityClass = priorityClass;
 		bucketFactory = bf;
@@ -104,6 +105,7 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 		curMaxTempLength = Long.MAX_VALUE;
 		curMaxMetadataLength = 1024 * 1024;
 		this.persistentBucketFactory = node.persistentTempBucketFactory;
+		this.realTimeFlag = realTimeFlag;
 	}
 
 	public HighLevelSimpleClientImpl(HighLevelSimpleClientImpl hlsc) {
@@ -117,6 +119,7 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 		this.curMaxMetadataLength = hlsc.curMaxMetadataLength;
 		this.curMaxTempLength = hlsc.curMaxTempLength;
 		this.random = hlsc.random;
+		this.realTimeFlag = hlsc.realTimeFlag;
 	}
 
 	public HighLevelSimpleClientImpl clone() {
@@ -205,7 +208,7 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 		PutWaiter pw = new PutWaiter();
 		ClientPutter put = new ClientPutter(pw, insert.getData(), insert.desiredURI, insert.clientMetadata,
 				context, priority,
-				getCHKOnly, isMetadata, this, null, filenameHint, false, core.clientContext, null);
+				getCHKOnly, isMetadata, this, filenameHint, false, core.clientContext, null);
 		try {
 			core.clientContext.start(put, false);
 		} catch (DatabaseDisabledException e) {
@@ -221,7 +224,7 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 	public ClientPutter insert(InsertBlock insert, boolean getCHKOnly, String filenameHint, boolean isMetadata, InsertContext ctx, ClientPutCallback cb, short priority) throws InsertException {
 		ClientPutter put = new ClientPutter(cb, insert.getData(), insert.desiredURI, insert.clientMetadata,
 				ctx, priority,
-				getCHKOnly, isMetadata, this, null, filenameHint, false, core.clientContext, null);
+				getCHKOnly, isMetadata, this, filenameHint, false, core.clientContext, null);
 		try {
 			core.clientContext.start(put, false);
 		} catch (DatabaseDisabledException e) {
@@ -248,6 +251,10 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 	}
 
 	public FreenetURI insertManifest(FreenetURI insertURI, HashMap<String, Object> bucketsByName, String defaultName) throws InsertException {
+		return insertManifest(insertURI, bucketsByName, defaultName, priorityClass);
+	}
+
+	public FreenetURI insertManifest(FreenetURI insertURI, HashMap<String, Object> bucketsByName, String defaultName, short priorityClass) throws InsertException {
 		PutWaiter pw = new PutWaiter();
 		SimpleManifestPutter putter =
 			new SimpleManifestPutter(pw, SimpleManifestPutter.bucketsByNameToManifestEntries(bucketsByName), priorityClass, insertURI, defaultName, getInsertContext(true), false, this, false, false, null, core.clientContext);
@@ -327,6 +334,10 @@ public class HighLevelSimpleClientImpl implements HighLevelSimpleClient, Request
 
 	public void removeFrom(ObjectContainer container) {
 		throw new UnsupportedOperationException();
+	}
+
+	public boolean realTimeFlag() {
+		return realTimeFlag;
 	}
 
 	public void startPutter(BaseManifestPutter bmp) throws InsertException, DatabaseDisabledException {

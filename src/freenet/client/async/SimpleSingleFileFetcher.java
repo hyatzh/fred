@@ -20,6 +20,7 @@ import freenet.keys.KeyDecodeException;
 import freenet.keys.TooBigException;
 import freenet.keys.USK;
 import freenet.node.LowLevelGetException;
+import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
 import freenet.support.Logger.LogLevel;
 import freenet.support.api.Bucket;
@@ -39,8 +40,8 @@ public class SimpleSingleFileFetcher extends BaseSingleFileFetcher implements Cl
 	}
 
 	SimpleSingleFileFetcher(ClientKey key, int maxRetries, FetchContext ctx, ClientRequester parent, 
-			GetCompletionCallback rcb, boolean isEssential, boolean dontAdd, long l, ObjectContainer container, ClientContext context, boolean deleteFetchContext) {
-		super(key, maxRetries, ctx, parent, deleteFetchContext);
+			GetCompletionCallback rcb, boolean isEssential, boolean dontAdd, long l, ObjectContainer container, ClientContext context, boolean deleteFetchContext, boolean realTimeFlag) {
+		super(key, maxRetries, ctx, parent, deleteFetchContext, realTimeFlag);
 		this.rcb = rcb;
 		this.token = l;
 		if(!dontAdd) {
@@ -54,7 +55,17 @@ public class SimpleSingleFileFetcher extends BaseSingleFileFetcher implements Cl
 
 	final GetCompletionCallback rcb;
 	final long token;
-	
+
+        private static volatile boolean logMINOR;
+	static {
+		Logger.registerLogThresholdCallback(new LogThresholdCallback(){
+			@Override
+			public void shouldUpdate(){
+				logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
+			}
+		});
+	}
+
 	// Translate it, then call the real onFailure
 	@Override
 	public void onFailure(LowLevelGetException e, Object reqTokenIgnored, ObjectContainer container, ClientContext context) {
@@ -102,7 +113,6 @@ public class SimpleSingleFileFetcher extends BaseSingleFileFetcher implements Cl
 			container.activate(parent, 1);
 			container.activate(rcb, 1);
 		}
-		boolean logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 		if(logMINOR) Logger.minor(this, "onFailure( "+e+" , "+forceFatal+")", e);
 		if(parent.isCancelled() || cancelled) {
 			if(logMINOR) Logger.minor(this, "Failing: cancelled");
@@ -183,7 +193,7 @@ public class SimpleSingleFileFetcher extends BaseSingleFileFetcher implements Cl
 		try {
 			data = block.decode(context.getBucketFactory(parent.persistent()), (int)(Math.min(ctx.maxOutputLength, Integer.MAX_VALUE)), false);
 		} catch (KeyDecodeException e1) {
-			if(Logger.shouldLog(LogLevel.MINOR, this))
+			if(logMINOR)
 				Logger.minor(this, "Decode failure: "+e1, e1);
 			onFailure(new FetchException(FetchException.BLOCK_DECODE_ERROR, e1.getMessage()), false, container, context);
 			return null;

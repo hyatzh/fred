@@ -46,9 +46,20 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 		UNAME = 7;
 
 	private volatile boolean closed = false;
+	private boolean closedFinished = false;
 
 	protected int INTERVAL = Calendar.MINUTE;
 	protected int INTERVAL_MULTIPLIER = 5;
+
+        private static volatile boolean logMINOR;
+	static {
+		Logger.registerLogThresholdCallback(new LogThresholdCallback(){
+			@Override
+			public void shouldUpdate(){
+				logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
+			}
+		});
+	}
 
 	/** Name of the local host (called uname in Unix-like operating systems). */
 	private static String uname;
@@ -276,7 +287,7 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 				}
 				System.err.println("Created log files");
 				startTime = gc.getTimeInMillis();
-		    	if(Logger.shouldLog(LogLevel.MINOR, this))
+		    	if(logMINOR)
 		    		Logger.minor(this, "Start time: "+gc+" -> "+startTime);
 				lastTime = startTime;
 				gc.add(INTERVAL, INTERVAL_MULTIPLIER);
@@ -322,6 +333,7 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 							}
 							try {
 								if(thisTime < maxWait) {
+									// Wait no more than 500ms since the CloserThread might be waiting for closedFinished.
 									list.wait(Math.min(500, (int)(Math.min(maxWait-thisTime, Integer.MAX_VALUE))));
 									thisTime = System.currentTimeMillis();
 									if(listBytes < LIST_WRITE_THRESHOLD) {
@@ -329,10 +341,15 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 										assert((listBytes == 0) == (list.peek() == null));
 										if(listBytes != 0 && maxWait == Long.MAX_VALUE)
 											maxWait = thisTime + flush;
-										continue;
+										if(closed) // If closing, write stuff ASAP.
+											o = list.poll();
+										else if(maxWait != Long.MAX_VALUE) {
+											continue;
+										}
+									} else {
+										// Do NOT use list.poll(timeout) because it uses a separate lock.
+										o = list.poll();
 									}
-									// Do NOT use list.poll(timeout) because it uses a separate lock.
-									o = list.poll();
 								}
 							} catch (InterruptedException e) {
 								// Ignored.
@@ -359,7 +376,25 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 				        if(altLogStream != null)
 				        	myWrite(altLogStream, null);
 					}
-					if(died) return;
+					if(died) {
+						try {
+							logStream.close();
+						} catch (IOException e) {
+							System.err.println("Failed to close log stream: "+e);
+						}
+						if(altLogStream != null) {
+							try {
+								altLogStream.close();
+							} catch (IOException e) {
+								System.err.println("Failed to close compressed log stream: "+e);
+							}
+						}
+						synchronized(list) {
+							closedFinished = true;
+							list.notifyAll();
+						}
+						return;
+					}
 					if(o == null) continue;
 					myWrite(logStream,  o);
 			        if(altLogStream != null)
@@ -546,7 +581,7 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 				}
 				olf.filename.delete();
 				oldLogFilesDiskSpaceUsage -= olf.size;
-		    	if(Logger.shouldLog(LogLevel.MINOR, this))
+		    	if(logMINOR)
 		    		Logger.minor(this, "Deleting "+olf.filename+" - saving "+olf.size+
 						" bytes, disk usage now: "+oldLogFilesDiskSpaceUsage+" of "+maxOldLogfilesDiskUsage);
 			}
@@ -575,8 +610,7 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 		File oldFile = null;
         if(latestFile.exists())
         	FileUtil.renameTo(latestFile, previousFile);
-        
-		boolean logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
+
 		for(int i=0;i<files.length;i++) {
 			File f = files[i];
 			String name = f.getName();
@@ -1019,7 +1053,20 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 	class CloserThread extends Thread {
 		@Override
 		public void run() {
-			closed = true;
+			synchronized(list) {
+				closed = true;
+				long deadline = System.currentTimeMillis() + 10*1000;
+				while(!closedFinished) {
+					int wait = (int) (deadline - System.currentTimeMillis());
+					if(wait <= 0) return;
+					try {
+						list.wait(wait);
+					} catch (InterruptedException e) {
+						// Ok.
+					}
+				}
+				System.out.println("Completed writing logs to disk.");
+			}
 		}
 	}
 
@@ -1046,7 +1093,6 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 			Iterator<OldLogFile> i = logFiles.iterator();
 			while(i.hasNext()) {
 				OldLogFile olf = i.next();
-		    	boolean logMINOR = Logger.shouldLog(LogLevel.MINOR, this);
 		    	if(logMINOR)
 		    		Logger.minor(this, "Checking "+time+" against "+olf.filename+" : start="+olf.start+", end="+olf.end);
 				if((time >= olf.start) && (time < olf.end)) {
@@ -1131,7 +1177,7 @@ public class FileLoggerHook extends LoggerHook implements Closeable {
 				}
 				olf.filename.delete();
 				oldLogFilesDiskSpaceUsage -= olf.size;
-				if(Logger.shouldLog(LogLevel.MINOR, this))
+				if(logMINOR)
 					Logger.minor(this, "Deleting "+olf.filename+" - saving "+olf.size+
 							" bytes, disk usage now: "+oldLogFilesDiskSpaceUsage+" of "+maxOldLogfilesDiskUsage);
 			}

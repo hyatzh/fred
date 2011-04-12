@@ -5,6 +5,7 @@
 package freenet.client.async;
 
 import java.io.BufferedInputStream;
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -80,10 +81,12 @@ public class ClientGetWorkerThread extends Thread {
 		this.charset = charset;
 		this.prefetchHook = prefetchHook;
 		this.tagReplacer = tagReplacer;
+		if(logMINOR) Logger.minor(this, "Created worker thread for "+uri+" mime type "+mimeType+" filter data = "+filterData+" charset "+charset);
 	}
 
 	@Override
 	public void run() {
+		if(logMINOR) Logger.minor(this, "Starting worker thread for "+uri+" mime type "+mimeType+" filter data = "+filterData+" charset "+charset);
 		try {
 			//Validate the hash of the now decompressed data
 			input = new BufferedInputStream(input);
@@ -107,6 +110,23 @@ public class ClientGetWorkerThread extends Thread {
 			else {
 				if(logMINOR) Logger.minor(this, "Ignoring content filter. The final result has not been written. Writing now.");
 				FileUtil.copy(input, output, -1);
+			}
+			// Dump the rest.
+			try {
+				while(true) {
+					long skipped = input.skip(4096);
+					if(skipped < 0) break;
+					if(skipped == 0) {
+						while(true) {
+							byte[] buf = new byte[4096];
+							int r = input.read(buf);
+							if(r < 0) break;
+						}
+						break;
+					}
+				}
+			} catch (EOFException e) {
+				// Okay.
 			}
 			input.close();
 			output.close();

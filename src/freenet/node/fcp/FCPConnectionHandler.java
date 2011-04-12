@@ -17,6 +17,7 @@ import com.db4o.ObjectContainer;
 import freenet.client.async.ClientContext;
 import freenet.client.async.DBJob;
 import freenet.client.async.DatabaseDisabledException;
+import freenet.node.RequestClient;
 import freenet.support.HexUtil;
 import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
@@ -89,6 +90,36 @@ public class FCPConnectionHandler implements Closeable {
 	private final HashMap<String, DirectoryAccess> checkedDirectories = new HashMap<String, DirectoryAccess>();
 	// DDACheckJobs in flight
 	private final HashMap<File, DDACheckJob> inTestDirectories = new HashMap<File, DDACheckJob>();
+	public final RequestClient connectionRequestClientBulk = new RequestClient() {
+		
+		public boolean persistent() {
+			return false;
+		}
+		
+		public void removeFrom(ObjectContainer container) {
+			throw new UnsupportedOperationException();
+		}
+
+		public boolean realTimeFlag() {
+			return false;
+		}
+		
+	};
+	public final RequestClient connectionRequestClientRT = new RequestClient() {
+		
+		public boolean persistent() {
+			return false;
+		}
+		
+		public void removeFrom(ObjectContainer container) {
+			throw new UnsupportedOperationException();
+		}
+
+		public boolean realTimeFlag() {
+			return true;
+		}
+		
+	};
 	
 	public FCPConnectionHandler(Socket s, FCPServer server) {
 		this.sock = s;
@@ -208,29 +239,8 @@ public class FCPConnectionHandler implements Closeable {
 	public void setClientName(final String name) {
 		this.clientName = name;
 		rebootClient = server.registerRebootClient(name, server.core, this);
-		rebootClient.queuePendingMessagesOnConnectionRestart(outputHandler, null);
-		if(!server.core.killedDatabase())
-			try {
-				server.core.clientContext.jobRunner.queue(new DBJob() {
-
-					public boolean run(ObjectContainer container, ClientContext context) {
-						try {
-							createForeverClient(name, container);
-						} catch (Throwable t) {
-							Logger.error(this, "Caught "+t+" creating persistent client for "+name, t);
-							failedGetForever = true;
-							synchronized(FCPConnectionHandler.this) {
-								failedGetForever = true;
-								FCPConnectionHandler.this.notifyAll();
-							}
-						}
-						return false;
-					}
-					
-				}, NativeThread.NORM_PRIORITY, false);
-			} catch (DatabaseDisabledException e) {
-				// Impossible??
-			}
+		rebootClient.queuePendingMessagesOnConnectionRestartAsync(outputHandler, null, server.core.clientContext);
+		// Create foreverClient lazily. Everything that needs it (especially creating ClientGet's etc) runs on a database job.
 		if(logMINOR)
 			Logger.minor(this, "Set client name: "+name);
 	}
@@ -244,7 +254,7 @@ public class FCPConnectionHandler implements Closeable {
 			foreverClient = client;
 			FCPConnectionHandler.this.notifyAll();
 		}
-		client.queuePendingMessagesOnConnectionRestart(outputHandler, container);
+		client.queuePendingMessagesOnConnectionRestartAsync(outputHandler, container, server.core.clientContext);
 		return foreverClient;
 	}
 
@@ -361,6 +371,7 @@ public class FCPConnectionHandler implements Closeable {
 				if(!persistent) {
 					try {
 						cp = new ClientPut(this, message, server, null);
+						requestsByIdentifier.put(id, cp);
 					} catch (IdentifierCollisionException e) {
 						success = false;
 					} catch (MessageInvalidException e) {
@@ -369,7 +380,6 @@ public class FCPConnectionHandler implements Closeable {
 					} catch (MalformedURLException e) {
 						failedMessage = new ProtocolErrorMessage(ProtocolErrorMessage.FREENET_URI_PARSE_ERROR, true, null, id, message.global);
 					}
-					requestsByIdentifier.put(id, cp);
 				} else if(message.persistenceType == ClientRequest.PERSIST_FOREVER) {
 					try {
 						server.core.clientContext.jobRunner.queue(new DBJob() {
@@ -798,6 +808,13 @@ public class FCPConnectionHandler implements Closeable {
 			sub = uskSubscriptions.remove(identifier);
 		}
 		sub.unsubscribe();
+	}
+
+	public RequestClient connectionRequestClient(boolean realTime) {
+		if(realTime)
+			return connectionRequestClientRT;
+		else
+			return connectionRequestClientBulk;
 	}
 
 }
