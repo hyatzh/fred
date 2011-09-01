@@ -90,6 +90,22 @@ public class JarClassLoader extends ClassLoader implements Closeable {
 	}
 
 	/**
+	 * Constructs a new jar class loader that loads classes from the specified
+	 * file.
+	 *
+	 * @param file
+	 *            The file to load classes from
+	 * @param parent
+	 *            The parent class loader for delegation
+	 * @throws IOException
+	 *             if an I/O error occurs
+	 */
+	public JarClassLoader(File file, ClassLoader parent) throws IOException {
+		super(parent);
+		tempJarFile = new JarFile(file);
+	}
+
+	/**
 	 * Copies the contents of the input stream (which are supposed to be the
 	 * contents of a jar file) to a temporary location.
 	 * 
