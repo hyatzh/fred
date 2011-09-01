@@ -418,4 +418,9 @@ public class NodeStarter implements WrapperListener {
 		nodestarter_osgi.stop(exitCode);
 		nodestarter_osgi = null;
 	}
+
+	// 'OSGi detector'
+	public static boolean isOSGi() {
+		return nodestarter_osgi != null;
+	}
 }
