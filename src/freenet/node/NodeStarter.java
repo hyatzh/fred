@@ -121,8 +121,11 @@ public class NodeStarter implements WrapperListener {
 		PooledExecutor executor = new PooledExecutor();
 
 		try {
-			System.out.println("Creating logger...");
-			logConfigHandler = new LoggingConfigHandler(loggingConfig, executor);
+			// In foe the logger is already set up in bundle activator
+			if (!isOSGi()) {
+				System.out.println("Creating logger...");
+				logConfigHandler = new LoggingConfigHandler(loggingConfig, executor);
+			}
 		} catch(InvalidConfigValueException e) {
 			System.err.println("Error: could not set up logging: " + e.getMessage());
 			e.printStackTrace();
