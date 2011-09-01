@@ -4,6 +4,10 @@
 	<classpathentry including="freenet/|org/" kind="src" output="build/test" path="test"/>
 	<classpathentry kind="lib" path="/usr/share/java/junit.jar"/>
 	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>
-	<classpathentry kind="lib" path="lib/freenet/freenet-ext.jar"/>
+	<classpathentry kind="lib" path="/orbit/lib/freenet-ext.jar"/>
+	<classpathentry combineaccessrules="false" kind="src" path="/FreenetCompress"/>
+	<classpathentry kind="lib" path="/orbit/lib/wrapper.jar"/>
+	<classpathentry combineaccessrules="false" kind="src" path="/concierge-framework"/>
+	<classpathentry combineaccessrules="false" kind="src" path="/FreenetLogger"/>
 	<classpathentry kind="output" path="build"/>
 </classpath>
