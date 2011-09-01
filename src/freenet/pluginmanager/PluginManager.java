@@ -48,6 +48,7 @@ import freenet.l10n.NodeL10n;
 import freenet.l10n.BaseL10n.LANGUAGE;
 import freenet.node.Node;
 import freenet.node.NodeClientCore;
+import freenet.node.NodeStarter;
 import freenet.node.RequestClient;
 import freenet.node.RequestStarter;
 import freenet.node.SecurityLevelListener;
@@ -1360,7 +1361,12 @@ public class PluginManager {
 			}
 
 			try {
-				JarClassLoader jarClassLoader = new JarClassLoader(pluginFile);
+				JarClassLoader jarClassLoader;
+				if (NodeStarter.isOSGi()) {
+					jarClassLoader = new JarClassLoader(pluginFile, this.getClass().getClassLoader());
+				} else {
+					jarClassLoader = new JarClassLoader(pluginFile);
+				}
 				Class<?> pluginMainClass = jarClassLoader.loadClass(pluginMainClassName);
 				Object object = pluginMainClass.newInstance();
 				if(!(object instanceof FredPlugin)) {
