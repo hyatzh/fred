@@ -66,6 +66,7 @@ import com.sleepycat.je.EnvironmentMutableConfig;
 
 import freenet.client.FECQueue;
 import freenet.client.FetchContext;
+import freenet.client.HighLevelSimpleClient;
 import freenet.client.async.SplitFileInserterSegment;
 import freenet.clients.http.SecurityLevelsToadlet;
 import freenet.clients.http.SimpleToadletServer;
@@ -131,6 +132,7 @@ import freenet.node.useralerts.NotEnoughNiceLevelsUserAlert;
 import freenet.node.useralerts.SimpleUserAlert;
 import freenet.node.useralerts.TimeSkewDetectedUserAlert;
 import freenet.node.useralerts.UserAlert;
+import freenet.osgi.freenetservice.FreenetServiceActivator;
 import freenet.pluginmanager.ForwardPort;
 import freenet.pluginmanager.PluginManager;
 import freenet.pluginmanager.PluginStore;
@@ -3812,6 +3814,10 @@ public class Node implements TimeSkewDetectorCallback {
 
 		// Process any data in the extra peer data directory
 		peers.readExtraPeerData();
+
+		// dirty hack to expose HLSC as osgi service.
+		HighLevelSimpleClient hlsc = clientCore.makeClient((short) 1);
+		FreenetServiceActivator.registerService(HighLevelSimpleClient.class.getName(), hlsc, null);
 
 		Logger.normal(this, "Started node");
 
