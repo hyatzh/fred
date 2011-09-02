@@ -12,7 +12,6 @@ import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
-import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
 
 import com.db4o.ObjectContainer;
@@ -27,6 +26,7 @@ import freenet.client.MetadataUnresolvedException;
 import freenet.client.ArchiveManager.ARCHIVE_TYPE;
 import freenet.client.Metadata.SimpleManifestComposer;
 import freenet.keys.FreenetURI;
+import freenet.osgi.compress.PaxFormatter;
 import freenet.support.Logger;
 import freenet.support.api.Bucket;
 import freenet.support.io.BucketTools;
@@ -294,35 +294,27 @@ public class ContainerInserter implements ClientPutState {
 			Logger.minor(this, "objectCanNew() on "+this, new Exception("debug"));
 		return true;
 	}
-	
 
 	/**
 	** OutputStream os will be close()d if this method returns successfully.
 	*/
 	private String createTarBucket(OutputStream os, @SuppressWarnings("unused") ObjectContainer container) throws IOException {
 		if(logMINOR) Logger.minor(this, "Create a TAR Bucket");
-		
+
 		TarArchiveOutputStream tarOS = new TarArchiveOutputStream(os);
-		tarOS.setLongFileMode(TarArchiveOutputStream.LONGFILE_GNU);
-		TarArchiveEntry ze;
+		PaxFormatter pf = new PaxFormatter(tarOS);
 
 		for(ContainerElement ph : containerItems) {
 			if(logMINOR)
 				Logger.minor(this, "Putting into tar: "+ph+" data length "+ph.data.size()+" name "+ph.targetInArchive);
-			ze = new TarArchiveEntry(ph.targetInArchive);
-			ze.setModTime(0);
-			long size = ph.data.size();
-			ze.setSize(size);
-			tarOS.putArchiveEntry(ze);
-			BucketTools.copyTo(ph.data, tarOS, size);
-			tarOS.closeArchiveEntry();
+			pf.addItem(ph.targetInArchive, ph.data.getInputStream(), ph.data.size());
 		}
-		
+
 		tarOS.close();
-		
+
 		return ARCHIVE_TYPE.TAR.mimeTypes[0];
 	}
-	
+
 	private String createZipBucket(OutputStream os, @SuppressWarnings("unused") ObjectContainer container) throws IOException {
 		if(logMINOR) Logger.minor(this, "Create a ZIP Bucket");
 		

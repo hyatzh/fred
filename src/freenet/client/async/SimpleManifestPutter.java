@@ -13,7 +13,6 @@ import java.util.Vector;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
-import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
 
 import com.db4o.ObjectContainer;
@@ -31,6 +30,7 @@ import freenet.keys.BaseClientKey;
 import freenet.keys.FreenetURI;
 import freenet.keys.Key;
 import freenet.node.RequestClient;
+import freenet.osgi.compress.PaxFormatter;
 import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
 import freenet.support.Logger.LogLevel;
@@ -1093,8 +1093,12 @@ public class SimpleManifestPutter extends ManifestPutter implements PutCompletio
 		if(logMINOR) Logger.minor(this, "Create a TAR Bucket");
 
 		TarArchiveOutputStream tarOS = new TarArchiveOutputStream(os);
-		tarOS.setLongFileMode(TarArchiveOutputStream.LONGFILE_GNU);
-		TarArchiveEntry ze;
+		PaxFormatter pf = new PaxFormatter(tarOS);
+
+		// Add .metadata - first.
+		if(logMINOR)
+			Logger.minor(this, "Putting metadata into tar: length is "+inputBucket.size());
+		pf.addItem(".metadata", inputBucket.getInputStream(), inputBucket.size());
 
 		for(PutHandler ph : elementsToPutInArchive) {
 			if(persistent()) {
@@ -1103,26 +1107,9 @@ public class SimpleManifestPutter extends ManifestPutter implements PutCompletio
 			}
 			if(logMINOR)
 				Logger.minor(this, "Putting into tar: "+ph+" data length "+ph.data.size()+" name "+ph.targetInArchive);
-			ze = new TarArchiveEntry(ph.targetInArchive);
-			ze.setModTime(0);
-			long size = ph.data.size();
-			ze.setSize(size);
-			tarOS.putArchiveEntry(ze);
-			BucketTools.copyTo(ph.data, tarOS, size);
-			tarOS.closeArchiveEntry();
+			pf.addItem(ph.targetInArchive, ph.data.getInputStream(), ph.data.size());
 		}
 
-		// Add .metadata - after the rest.
-		if(logMINOR)
-			Logger.minor(this, "Putting metadata into tar: length is "+inputBucket.size());
-		ze = new TarArchiveEntry(".metadata");
-		ze.setModTime(0); // -1 = now, 0 = 1970.
-		long size = inputBucket.size();
-		ze.setSize(size);
-		tarOS.putArchiveEntry(ze);
-		BucketTools.copyTo(inputBucket, tarOS, size);
-
-		tarOS.closeArchiveEntry();
 		tarOS.close();
 
 		return ARCHIVE_TYPE.TAR.mimeTypes[0];
