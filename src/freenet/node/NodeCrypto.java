@@ -530,7 +530,7 @@ public class NodeCrypto {
 			if(pn.equals(peerNode)) continue;
 			if(pn.crypto.config.oneConnectionPerAddress()) {
 				if(pn instanceof DarknetPeerNode) {
-					if(!peerNode.isDarknet()) {
+					if(!(peerNode instanceof DarknetPeerNode)) {
 						// Darknet is only affected by other darknet peers.
 						// Opennet peers with the same IP will NOT cause darknet peers to be dropped, even if one connection per IP is set for darknet, and even if it isn't set for opennet.
 						// (Which would be a perverse configuration anyway!)
@@ -538,7 +538,7 @@ public class NodeCrypto {
 						continue;
 					}
 					Logger.error(this, "Dropping peer "+pn+" because don't want connection due to others on the same IP address!");
-					System.out.println("Disconnecting permanently from your friend \""+((DarknetPeerNode)pn).getName()+"\" because other peers are using the same IP address!");
+					System.out.println("Disconnecting permanently from your friend \""+((DarknetPeerNode)pn).getName()+"\" because your friend \""+((DarknetPeerNode)peerNode).getName()+"\" is using the same IP address "+address+"!");
 				}
 				node.peers.disconnectAndRemove(pn, true, true, pn.isOpennet());
 			}

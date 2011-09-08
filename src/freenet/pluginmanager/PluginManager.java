@@ -1307,7 +1307,6 @@ public class PluginManager {
 
 		cancelRunningLoads(name, progress);
 
-		boolean remoteCodeExecVuln = node.xmlRemoteCodeExecVuln();
 		// we do quite a lot inside the lock, use a dedicated one
 		synchronized (pluginLoadSyncObject) {
 			/* now get the manifest file. */
@@ -1415,11 +1414,6 @@ public class PluginManager {
 						pluginFile.delete();
 						if(!downloaded) continue;
 						throw new PluginTooOldException("plugin too old: need at least version "+minVer+" but is "+ver);
-					}
-
-					if(desc.usesXML && remoteCodeExecVuln) {
-						pluginFile.delete();
-						throw new PluginNotFoundException("plugin cannot be loaded because your JVM is dangerously old; plugin uses XML and your JVM has remote code execution vulnerabilities in its XML parser");
 					}
 
 				}

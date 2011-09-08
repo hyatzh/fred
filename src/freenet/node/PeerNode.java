@@ -1841,14 +1841,36 @@ public abstract class PeerNode implements USKRetrieverCallback, BasePeerNode {
 		}
 
 		Arrays.sort(newLocs);
+		
+		boolean anythingChanged = false;
 
 		synchronized(this) {
+			if(!Location.equals(currentLocation, newLoc))
+				anythingChanged = true;
 			currentLocation = newLoc;
+			if(newLocs != null && currentPeersLocation == null || 
+					newLocs == null && currentPeersLocation != null)
+				anythingChanged = true;
+			else if(currentPeersLocation != null && newLocs != null && !anythingChanged) {
+				if(currentPeersLocation.length != newLocs.length)
+					anythingChanged = true;
+				else {
+					for(int i=0;i<currentPeersLocation.length;i++) {
+						if(!Location.equals(currentPeersLocation[i], newLocs[i])) {
+							anythingChanged = true;
+							break;
+						}
+					}
+				}
+			}
 			currentPeersLocation = newLocs;
 			locSetTime = System.currentTimeMillis();
 		}
 		node.peers.updatePMUserAlert();
-		node.peers.writePeers();
+		if(anythingChanged)
+			// Not urgent. This makes up the majority of the total writes.
+			// Writing it on shutdown is sufficient.
+			node.peers.writePeers(isOpennet());
 		setPeerNodeStatus(System.currentTimeMillis());
 	}
 
@@ -2681,7 +2703,8 @@ public abstract class PeerNode implements USKRetrieverCallback, BasePeerNode {
 			Logger.minor(this, "Parsing: \n" + fs);
 		boolean changedAnything = innerProcessNewNoderef(fs, forARK, forDiffNodeRef, forFullNodeRef) || forARK;
 		if(changedAnything && !isSeed())
-			node.peers.writePeers();
+			node.peers.writePeers(isOpennet());
+		// FIXME should this be urgent if IPs change? Dunno.
 	}
 
 	/**
@@ -6077,14 +6100,19 @@ public abstract class PeerNode implements USKRetrieverCallback, BasePeerNode {
 	 * @param strict If true, only match if the IP is actually in use. If false,
 	 * also match from nominal IP addresses and domain names etc. */
 	public synchronized boolean matchesIP(FreenetInetAddress addr, boolean strict) {
-		if(detectedPeer != null && 
-				strict ?
-				detectedPeer.getFreenetAddress().equals(addr) :
-				detectedPeer.getFreenetAddress().laxEquals(addr)
-				) return true;
+		if(detectedPeer != null) {
+			FreenetInetAddress a = detectedPeer.getFreenetAddress();
+			if(a != null) {
+				if(strict ? a.equals(addr) : a.laxEquals(addr))
+					return true;
+			}
+		}
 		if((!strict) && nominalPeer != null) {
 			for(Peer p : nominalPeer) {
-				if(p != null && p.getFreenetAddress().laxEquals(addr)) return true;
+				if(p == null) continue;
+				FreenetInetAddress a = p.getFreenetAddress();
+				if(a == null) continue;
+				if(a.laxEquals(addr)) return true;
 			}
 		}
 		return false;

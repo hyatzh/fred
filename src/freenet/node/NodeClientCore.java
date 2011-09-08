@@ -87,6 +87,7 @@ import freenet.support.io.FilenameGenerator;
 import freenet.support.io.NativeThread;
 import freenet.support.io.PersistentTempBucketFactory;
 import freenet.support.io.TempBucketFactory;
+import freenet.support.math.MersenneTwister;
 
 /**
  * The connection between the node and the client layer.
@@ -194,8 +195,20 @@ public class NodeClientCore implements Persistable, DBJobRunner, OOMHook, Execut
 
 		// Temp files
 
-		this.tempDir = node.setupProgramDir(installConfig, "tempDir", node.runDir().file("temp-"+portNumber).toString(),
+		this.tempDir = node.setupProgramDir(installConfig, "tempDir", node.runDir().file("temp").toString(),
 		  "NodeClientCore.tempDir", "NodeClientCore.tempDirLong", nodeConfig);
+		
+		// FIXME remove back compatibility hack.
+		File oldTemp = node.runDir().file("temp-"+node.getDarknetPortNumber());
+		if(oldTemp.exists() && oldTemp.isDirectory() && !FileUtil.equals(tempDir.dir, oldTemp)) {
+			System.err.println("Deleting old temporary dir: "+oldTemp);
+			try {
+				FileUtil.secureDeleteAll(oldTemp, new MersenneTwister(random.nextLong()));
+			} catch (IOException e) {
+				// Ignore.
+			}
+		}
+		
 		FileUtil.setOwnerRWX(getTempDir());
 
 		try {
@@ -857,12 +870,29 @@ public class NodeClientCore implements Persistable, DBJobRunner, OOMHook, Execut
 		}
 	}
 
+	/** Start an asynchronous fetch for the key, which will complete by calling 
+	 * tripPendingKey() if successful, as well as calling the listener in most cases.
+	 * @param key The key to fetch.
+	 * @param offersOnly If true, only fetch the key from nodes that have offered it, using GetOfferedKeys,
+	 * don't do a normal fetch for it.
+	 * @param listener The listener is called if we start a request and fail to fetch, and also in most
+	 * cases on success or on not starting one. FIXME it may not always be called e.g. on fetching the data
+	 * from the datastore - is this a problem?
+	 * @param canReadClientCache Can this request read the client-cache?
+	 * @param canWriteClientCache Can this request write the client-cache?
+	 * @param htl The HTL to start the request at. See the caller, this can be modified in the case of 
+	 * fetching an offered key.
+	 * @param realTimeFlag Is this a real-time request? False = this is a bulk request.
+	 * @param localOnly If true, only check the datastore, don't create a request if nothing is found.
+	 * @param ignoreStore If true, don't check the datastore, create a request immediately.
+	 */
 	public void asyncGet(final Key key, boolean offersOnly, final RequestCompletionListener listener, boolean canReadClientCache, boolean canWriteClientCache, final boolean realTimeFlag, boolean localOnly, boolean ignoreStore) {
 		final long uid = makeUID();
 		final boolean isSSK = key instanceof NodeSSK;
 		final RequestTag tag = new RequestTag(isSSK, RequestTag.START.ASYNC_GET, null, realTimeFlag, uid, node);
 		if(!node.lockUID(uid, isSSK, false, false, true, realTimeFlag, tag)) {
 			Logger.error(this, "Could not lock UID just randomly generated: " + uid + " - probably indicates broken PRNG");
+			listener.onFailed(new LowLevelGetException(LowLevelGetException.INTERNAL_ERROR, "Could not lock random UID - serious PRNG problem???"));
 			return;
 		}
 		tag.setAccepted();
@@ -875,7 +905,7 @@ public class NodeClientCore implements Persistable, DBJobRunner, OOMHook, Execut
 			if(logMINOR) Logger.minor(this, "Using old HTL for GetOfferedKey: "+htl);
 		}
 		final long startTime = System.currentTimeMillis();
-		asyncGet(key, isSSK, offersOnly, uid, new RequestSenderListener() {
+		asyncGet(key, offersOnly, uid, new RequestSenderListener() {
 
 			private boolean rejectedOverload;
 			
@@ -889,6 +919,12 @@ public class NodeClientCore implements Persistable, DBJobRunner, OOMHook, Execut
 				synchronized(this) {
 					rejectedOverload = true;
 				}
+			}
+			
+			@Override
+			public void onDataFoundLocally() {
+				tag.unlockHandler();
+				listener.onSucceeded();
 			}
 
 			/** The RequestSender finished.
@@ -1009,8 +1045,11 @@ public class NodeClientCore implements Persistable, DBJobRunner, OOMHook, Execut
 			}
 
 			@Override
-			public void onNotStarted() {
-				listener.onFailed(new LowLevelGetException(LowLevelGetException.DATA_NOT_FOUND_IN_STORE));
+			public void onNotStarted(boolean internalError) {
+				if(internalError)
+					listener.onFailed(new LowLevelGetException(LowLevelGetException.INTERNAL_ERROR));
+				else
+					listener.onFailed(new LowLevelGetException(LowLevelGetException.DATA_NOT_FOUND_IN_STORE));
 			}
 		}, tag, canReadClientCache, canWriteClientCache, htl, realTimeFlag, localOnly, ignoreStore);
 	}
@@ -1019,18 +1058,33 @@ public class NodeClientCore implements Persistable, DBJobRunner, OOMHook, Execut
 	 * Start an asynchronous fetch of the key in question, which will complete to the datastore.
 	 * It will not decode the data because we don't provide a ClientKey. It will not return
 	 * anything and will run asynchronously. Caller is responsible for unlocking the UID.
-	 * @param key
+	 * @param key The key being fetched.
+	 * @param offersOnly If true, only fetch the key from nodes that have offered it, using GetOfferedKeys,
+	 * don't do a normal fetch for it.
+	 * @param uid The UID of the request. This should already be locked, see the tag.
+	 * @param tag The RequestTag for the request. In case of an error when starting it we will unlock it,
+	 * but in other cases the listener should unlock it.
+	 * @param listener Will be called by the request sender, if a request is started.
+	 * However, for example, if we fetch it from the store, it will be returned via the
+	 * tripPendingKeys mechanism.
+	 * @param canReadClientCache Can this request read the client-cache?
+	 * @param canWriteClientCache Can this request write the client-cache?
+	 * @param htl The HTL to start the request at. See the caller, this can be modified in the case of 
+	 * fetching an offered key.
+	 * @param realTimeFlag Is this a real-time request? False = this is a bulk request.
+	 * @param localOnly If true, only check the datastore, don't create a request if nothing is found.
+	 * @param ignoreStore If true, don't check the datastore, create a request immediately.
 	 */
-	void asyncGet(Key key, boolean isSSK, boolean offersOnly, long uid, RequestSenderListener listener, RequestTag tag, boolean canReadClientCache, boolean canWriteClientCache, short htl, boolean realTimeFlag, boolean ignoreStore, boolean localOnly) {
+	void asyncGet(Key key, boolean offersOnly, long uid, RequestSenderListener listener, RequestTag tag, boolean canReadClientCache, boolean canWriteClientCache, short htl, boolean realTimeFlag, boolean localOnly, boolean ignoreStore) {
 		try {
 			Object o = node.makeRequestSender(key, htl, uid, tag, null, localOnly, ignoreStore, offersOnly, canReadClientCache, canWriteClientCache, realTimeFlag);
 			if(o instanceof KeyBlock) {
 				tag.servedFromDatastore = true;
-				tag.unlockHandler();
+				listener.onDataFoundLocally();
 				return; // Already have it.
 			}
 			if(o == null) {
-				listener.onNotStarted();
+				listener.onNotStarted(false);
 				tag.unlockHandler();
 				return;
 			}
@@ -1043,10 +1097,10 @@ public class NodeClientCore implements Persistable, DBJobRunner, OOMHook, Execut
 				Logger.minor(this, "Started " + o + " for " + uid + " for " + key);
 		} catch(RuntimeException e) {
 			Logger.error(this, "Caught error trying to start request: " + e, e);
-			tag.unlockHandler();
+			listener.onNotStarted(true);
 		} catch(Error e) {
 			Logger.error(this, "Caught error trying to start request: " + e, e);
-			tag.unlockHandler();
+			listener.onNotStarted(true);
 		}
 	}
 
