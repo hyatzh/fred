@@ -14,9 +14,15 @@ public class BandwidthLimit {
 	 * Upload limit in bytes.
 	 */
 	public final long upBytes;
+	
+	public final String descriptionKey;
+	
+	public final boolean maybeDefault;
 
-	public BandwidthLimit(long downBytes, long upBytes) {
+	public BandwidthLimit(long downBytes, long upBytes, String descriptionKey, boolean maybeDefault) {
 		this.downBytes = downBytes;
 		this.upBytes = upBytes;
+		this.descriptionKey = descriptionKey;
+		this.maybeDefault = maybeDefault;
 	}
 }

@@ -3,13 +3,12 @@ package freenet.clients.http.wizardsteps;
 import freenet.config.Config;
 import freenet.config.ConfigException;
 import freenet.config.InvalidConfigValueException;
+import freenet.config.SubConfig;
 import freenet.l10n.NodeL10n;
 import freenet.node.NodeClientCore;
 import freenet.pluginmanager.FredPluginBandwidthIndicator;
 import freenet.support.HTMLNode;
 import freenet.support.Logger;
-
-import javax.swing.text.html.HTML;
 
 /**
  * Utility class used by bandwidth steps to detect and set bandwidth, and set the wizard completion flag.
@@ -52,6 +51,13 @@ public abstract class BandwidthManipulator {
 		        new String[] { "limit" }, new HTMLNode[] { new HTMLNode("#", parsingFailedOn) });
 	}
 
+	protected BandwidthLimit getCurrentBandwidthLimitsOrNull() {
+		if (!config.get("node").getOption("outputBandwidthLimit").isDefault()) {
+			return new BandwidthLimit(core.node.getInputBandwidthLimit(), core.node.getOutputBandwidthLimit(), "bandwidthCurrent", false);
+		}
+		return null;
+	}
+	
 	/**
 	 * Attempts to detect upstream and downstream bandwidth limits.
 	 * @return Upstream and downstream bandwidth in bytes per second. If a limit is set to -1, it is unavailable or
@@ -60,13 +66,10 @@ public abstract class BandwidthManipulator {
 	 * -3 if the UPnP plugin is not loaded or done starting up.
 	 */
 	protected BandwidthLimit detectBandwidthLimits() {
-		if (!config.get("node").getOption("outputBandwidthLimit").isDefault()) {
-			return new BandwidthLimit(-2, -2);
-		}
 		FredPluginBandwidthIndicator bwIndicator = core.node.ipDetector.getBandwidthIndicator();
 		if (bwIndicator == null) {
 			Logger.normal(this, "The node does not have a bandwidthIndicator.");
-			return new BandwidthLimit(-3, -3);
+			return new BandwidthLimit(-3, -3, "bandwidthDetected", false);
 		}
 
 		int downstreamBits = bwIndicator.getDownstreamMaxBitRate();
@@ -100,7 +103,7 @@ public abstract class BandwidthManipulator {
 			upstreamBytes = upstreamBits/8;
 		}
 
-		return new BandwidthLimit(downstreamBytes, upstreamBytes);
+		return new BandwidthLimit(downstreamBytes, upstreamBytes, "bandwidthDetected", false);
 	}
 
 	protected void setWizardComplete() {

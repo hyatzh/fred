@@ -32,6 +32,7 @@ import freenet.client.events.SimpleEventProducer;
 import freenet.client.filter.FilterCallback;
 import freenet.client.filter.FoundURICallback;
 import freenet.client.filter.GenericReadFilterCallback;
+import freenet.client.filter.LinkFilterExceptionProvider;
 import freenet.clients.http.FProxyToadlet;
 import freenet.clients.http.SimpleToadletServer;
 import freenet.config.Config;
@@ -328,7 +329,7 @@ public class NodeClientCore implements Persistable, DBJobRunner, OOMHook, Execut
 						0, 2, 0, 0, new SimpleEventProducer(),
 						false, Node.FORK_ON_CACHEABLE_DEFAULT, false, Compressor.DEFAULT_COMPRESSORDESCRIPTOR, 0, 0, InsertContext.CompatibilityMode.COMPAT_CURRENT), RequestStarter.PREFETCH_PRIORITY_CLASS, 512 /* FIXME make configurable */);
 
-		clientContext = new ClientContext(node.bootID, nodeDBHandle, this, fecQueue, node.executor, backgroundBlockEncoder, archiveManager, persistentTempBucketFactory, tempBucketFactory, persistentTempBucketFactory, healingQueue, uskManager, random, node.fastWeakRandom, node.getTicker(), tempFilenameGenerator, persistentFilenameGenerator, compressor, storeChecker);
+		clientContext = new ClientContext(node.bootID, nodeDBHandle, this, fecQueue, node.executor, backgroundBlockEncoder, archiveManager, persistentTempBucketFactory, tempBucketFactory, persistentTempBucketFactory, healingQueue, uskManager, random, node.fastWeakRandom, node.getTicker(), tempFilenameGenerator, persistentFilenameGenerator, compressor, storeChecker, toadlets);
 		compressor.setClientContext(clientContext);
 		storeChecker.setContext(clientContext);
 
@@ -338,8 +339,6 @@ public class NodeClientCore implements Persistable, DBJobRunner, OOMHook, Execut
 			throw new NodeInitException(NodeInitException.EXIT_BAD_CONFIG, e1.toString());
 		}
 		
-		requestStarters.setUseAIMDsBulk(node.nodeStats.useAIMDsBulk());
-		requestStarters.setUseAIMDsRT(node.nodeStats.useAIMDsRT());
 		
 		clientContext.init(requestStarters, alerts);
 		initKeys(container);
@@ -965,7 +964,9 @@ public class NodeClientCore implements Persistable, DBJobRunner, OOMHook, Execut
 				if((status == RequestSender.TIMED_OUT) ||
 					(status == RequestSender.GENERATED_REJECTED_OVERLOAD)) {
 					if(!rejectedOverload) {
-						// See below
+						// If onRejectedOverload() is going to happen,
+						// it should have happened before this callback is called, so
+						// we don't need to check again here.
 						requestStarters.rejectedOverload(isSSK, false, realTimeFlag);
 						rejectedOverload = true;
 						long rtt = System.currentTimeMillis() - startTime;
@@ -1686,6 +1687,16 @@ public class NodeClientCore implements Persistable, DBJobRunner, OOMHook, Execut
 		return toadletContainer;
 	}
 
+	/**
+	 * Returns the link filter exception provider of the node. At the moment
+	 * this is the {@link #getToadletContainer() toadlet container}.
+	 *
+	 * @return The link filter exception provider
+	 */
+	public LinkFilterExceptionProvider getLinkFilterExceptionProvider() {
+		return toadletContainer;
+	}
+
 	public TextModeClientInterfaceServer getTextModeClientInterface() {
 		return tmci;
 	}
@@ -1747,7 +1758,7 @@ public class NodeClientCore implements Persistable, DBJobRunner, OOMHook, Execut
 	public FilterCallback createFilterCallback(URI uri, FoundURICallback cb) {
 		if(logMINOR)
 			Logger.minor(this, "Creating filter callback: " + uri + ", " + cb);
-		return new GenericReadFilterCallback(uri, cb,null);
+		return new GenericReadFilterCallback(uri, cb,null, toadletContainer);
 	}
 
 	public int maxBackgroundUSKFetchers() {
@@ -2102,14 +2113,6 @@ public class NodeClientCore implements Persistable, DBJobRunner, OOMHook, Execut
 		short origHTL = node.decrementHTL(null, node.maxHTL());
 		node.peers.closerPeer(null, new HashSet<PeerNode>(), key.toNormalizedDouble(), true, false, -1, null, 2.0, key, origHTL, 0, true, realTime, r, false, System.currentTimeMillis(), node.enableNewLoadManagement(realTime));
 		return r.recentlyFailed();
-	}
-
-	public void onSetUseAIMDsRT(boolean val) {
-		requestStarters.setUseAIMDsBulk(val);
-	}
-
-	public void onSetUseAIMDsBulk(boolean val) {
-		requestStarters.setUseAIMDsRT(val);
 	}
 
 }
