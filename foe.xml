@@ -10,7 +10,7 @@ This file is to build Freenet as OSGi bundle for the 'Freenet OSGi Experiment' (
 	<property name="doc.skip" value="true"/>
 	<property name="lib.contrib.dir" value="../foe/orbit/lib/"/>
 	<property name="lib.dir" value="../"/>
-	<property name="lib.jars" value="foe/FreenetCompress/dist/FreenetCompress.jar concierge/framework/dist/fconcierge.jar foe/FreenetLogger/dist/FreenetLogger.jar"/>
+	<property name="lib.jars" value="foe/FreenetCompress/dist/FreenetCompress.jar concierge/org.eclipse.concierge/dist/org.eclipse.concierge.jar foe/FreenetLogger/dist/FreenetLogger.jar foe/orbit/lib/bcprov-jdk15on-151.jar"/>
 
 	<import file="build-clean.xml"/>
 
