@@ -52,6 +52,7 @@ import com.db4o.diagnostic.DiagnosticListener;
 import com.db4o.ext.Db4oException;
 import com.db4o.io.IoAdapter;
 
+import freenet.client.HighLevelSimpleClient;
 import freenet.client.FetchContext;
 import freenet.clients.fcp.FCPMessage;
 import freenet.clients.fcp.FeedMessage;
@@ -118,6 +119,7 @@ import freenet.node.useralerts.NotEnoughNiceLevelsUserAlert;
 import freenet.node.useralerts.SimpleUserAlert;
 import freenet.node.useralerts.TimeSkewDetectedUserAlert;
 import freenet.node.useralerts.UserAlert;
+import freenet.osgi.freenetservice.FreenetServiceActivator;
 import freenet.pluginmanager.ForwardPort;
 import freenet.pluginmanager.PluginDownLoaderOfficialHTTPS;
 import freenet.pluginmanager.PluginManager;
@@ -3289,6 +3291,10 @@ public class Node implements TimeSkewDetectorCallback {
 
 		// Process any data in the extra peer data directory
 		peers.readExtraPeerData();
+
+		// dirty hack to expose HLSC as osgi service.
+		HighLevelSimpleClient hlsc = clientCore.makeClient((short) 1);
+		FreenetServiceActivator.registerService(HighLevelSimpleClient.class.getName(), hlsc, null);
 
 		Logger.normal(this, "Started node");
 
