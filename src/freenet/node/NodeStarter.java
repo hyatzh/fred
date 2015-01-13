@@ -469,6 +469,11 @@ public class NodeStarter implements WrapperListener {
 		nodestarter_osgi = null;
 	}
 
+    // 'OSGi detector'
+    public static boolean isOSGi() {
+        return nodestarter_osgi != null;
+    }
+
 	/** Get the memory limit in MB. Return -1 if we don't know, -2 for unlimited. */
 	public static long getMemoryLimitMB() {
 		long limit = getMemoryLimitBytes();
