@@ -9,9 +9,6 @@ import java.io.File;
 import java.io.IOException;
 import java.security.SecureRandom;
 
-import org.tanukisoftware.wrapper.WrapperListener;
-import org.tanukisoftware.wrapper.WrapperManager;
-
 import freenet.config.FreenetFilePersistentConfig;
 import freenet.config.InvalidConfigValueException;
 import freenet.config.PersistentConfig;
@@ -36,7 +33,7 @@ import freenet.support.io.NativeThread;
  *  
  *  There will only ever be one instance of NodeStarter.
  */
-public class NodeStarter implements WrapperListener {
+public class NodeStarter {
 
 	private Node node;
 	private static LoggingConfigHandler logConfigHandler;
@@ -95,7 +92,6 @@ public class NodeStarter implements WrapperListener {
 	 *         of the start method.  If there were no problems then this
 	 *         method should return null.
 	 */
-	@Override
 	public Integer start(String[] args) {
 		synchronized(NodeStarter.class) {
 			if(isStarted) throw new IllegalStateException();
@@ -153,7 +149,7 @@ public class NodeStarter implements WrapperListener {
 		executor.start();
 
 		// Prevent timeouts for a while. The DiffieHellman init for example could take some time on a very slow system.
-		WrapperManager.signalStarting(500000);
+		//WrapperManager.signalStarting(500000);
 
 		// Thread to keep the node up.
 		// JVM deadlocks losing a lock when two threads of different types (daemon|app)
@@ -220,18 +216,17 @@ public class NodeStarter implements WrapperListener {
 	 *         the option of changing the exit code if there are any problems
 	 *         during shutdown.
 	 */
-	@Override
 	public int stop(int exitCode) {
 		System.err.println("Shutting down with exit code " + exitCode);
 		node.park();
 		// see #354
-		WrapperManager.signalStopping(120000);
+		//WrapperManager.signalStopping(120000);
 
 		return exitCode;
 	}
 
 	public void restart() {
-		WrapperManager.restart();
+		//WrapperManager.restart();
 	}
 
 	/**
@@ -243,7 +238,7 @@ public class NodeStarter implements WrapperListener {
 	 *
 	 * @param event The system control signal.
 	 */
-	@Override
+	/*@Override
 	public void controlEvent(int event) {
 		if(WrapperManager.isControlledByNativeWrapper()) {
 			// The Wrapper will take care of this event
@@ -254,7 +249,7 @@ public class NodeStarter implements WrapperListener {
 				(event == WrapperManager.WRAPPER_CTRL_CLOSE_EVENT) ||
 				(event == WrapperManager.WRAPPER_CTRL_SHUTDOWN_EVENT))
 				WrapperManager.stop(0);
-	}
+	}*/
 
 	/*---------------------------------------------------------------
 	 * Main Method
@@ -264,7 +259,7 @@ public class NodeStarter implements WrapperListener {
 		//  Wrapper then the application will wait for the native Wrapper to
 		//  call the application's start method.  Otherwise the start method
 		//  will be called immediately.
-		WrapperManager.start(new NodeStarter(), args);
+		//WrapperManager.start(new NodeStarter(), args);
 	}
 
 	static SemiOrderedShutdownHook shutdownHook;

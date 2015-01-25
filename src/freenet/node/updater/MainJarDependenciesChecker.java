@@ -36,8 +36,6 @@ import java.util.regex.PatternSyntaxException;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-import org.tanukisoftware.wrapper.WrapperManager;
-
 import freenet.client.FetchException;
 import freenet.crypt.SHA256;
 import freenet.keys.FreenetURI;
@@ -1450,7 +1448,7 @@ outer:	for(String propName : props.stringPropertyNames()) {
         
         @Override
         protected boolean deployMultiFileUpdate() {
-            if(!WrapperManager.isControlledByNativeWrapper()) return false;
+            /*if(!WrapperManager.isControlledByNativeWrapper()) return false;
             File restartScript;
             try {
                 restartScript = createRestartScript();
@@ -1476,7 +1474,7 @@ outer:	for(String propName : props.stringPropertyNames()) {
                 System.out.println("Shutting down Freenet for hard restart after deploying multi-file update for "+name+". The script "+restartScript+" should start it back up.");
                 WrapperManager.stop(0);
                 return true;
-            } else return false;
+            } else*/ return false;
         }
 
         private File findShell() {
@@ -1515,7 +1513,7 @@ outer:	for(String propName : props.stringPropertyNames()) {
                 OutputStreamWriter osw = new OutputStreamWriter(os, "ISO-8859-1"); // Right???
                 osw.write("#!/bin/sh\n"); // FIXME exec >/dev/null 2>&1 ???? Believed to be portable.
                 //osw.write("trap true PIPE\n"); - should not be necessary
-                osw.write("while kill -0 "+WrapperManager.getWrapperPID()+" > /dev/null 2>&1; do sleep 1; done\n");
+                //osw.write("while kill -0 "+WrapperManager.getWrapperPID()+" > /dev/null 2>&1; do sleep 1; done\n");
                 osw.write("./"+runshNoNice+" start > /dev/null 2>&1\n");
                 osw.write("rm "+RESTART_SCRIPT_NAME+"\n");
                 osw.write("rm "+runshNoNice+"\n");

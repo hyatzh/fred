@@ -38,8 +38,6 @@ import java.util.Set;
 
 import freenet.node.useralerts.JVMVersionAlert;
 import freenet.support.JVMVersion;
-import org.tanukisoftware.wrapper.WrapperManager;
-
 import com.db4o.Db4o;
 import com.db4o.ObjectContainer;
 import com.db4o.ObjectSet;
@@ -955,9 +953,9 @@ public class Node implements TimeSkewDetectorCallback {
 	}
 
 	public boolean isUsingWrapper(){
-		if(nodeStarter!=null && WrapperManager.isControlledByNativeWrapper())
-			return true;
-		else
+		//if(nodeStarter!=null && WrapperManager.isControlledByNativeWrapper())
+		//	return true;
+		//else
 			return false;
 	}
 
@@ -1105,7 +1103,7 @@ public class Node implements TimeSkewDetectorCallback {
 				long extend = target - now;
 				assert(extend < Integer.MAX_VALUE);
 				assert(extend > 0);
-				WrapperManager.signalStarting((int)extend);
+				//WrapperManager.signalStarting((int)extend);
 				tLastAdded = now;
 			}
 
@@ -2205,7 +2203,7 @@ public class Node implements TimeSkewDetectorCallback {
 					UpdateDeployContext.CHANGED changed = 
 						UpdateDeployContext.tryIncreaseMemoryLimit(extraMemoryMB, " Increased because of slot filters in "+(lastVersionWithBloom+1));
 					if(changed == CHANGED.SUCCESS) {
-						WrapperManager.restart();
+						//WrapperManager.restart();
 						System.err.println("Unable to restart after increasing memory limit for the slot filters (the total memory usage is decreased relative to bloom filters but the heap size needs to grow). Probably due to not running in the wrapper.");
 						System.err.println("If the node crashes due to out of memory, be it on your own head!");
 						System.err.println("You need to increase wrapper.java.maxmemory by "+extraMemoryMB);
@@ -2534,7 +2532,7 @@ public class Node implements TimeSkewDetectorCallback {
 		// it's likely (on reports so far) that a restart will fix it.
 		// And we have to get a build out because ALL plugins are now failing to load,
 		// including the absolutely essential (for most nodes) JSTUN and UPnP.
-		WrapperManager.signalStarting((int) MINUTES.toMillis(2));
+		//WrapperManager.signalStarting((int) MINUTES.toMillis(2));
 
 		FetchContext ctx = clientCore.makeClient((short)0, true, false).getFetchContext();
 
@@ -2746,7 +2744,7 @@ public class Node implements TimeSkewDetectorCallback {
 				// Fouled up after encrypting/decrypting.
 				System.err.println("Caught "+e+" opening encrypted database.");
 				e.printStackTrace();
-				WrapperManager.restart();
+				//WrapperManager.restart();
 				throw e;
 			}
 		}
@@ -3240,8 +3238,8 @@ public class Node implements TimeSkewDetectorCallback {
 			Logger.normal(this, "Using wrapper correctly: "+nodeStarter);
 			System.out.println("Using wrapper correctly: "+nodeStarter);
 		} else {
-			Logger.error(this, "NOT using wrapper (at least not correctly).  Your freenet-ext.jar <http://downloads.freenetproject.org/alpha/freenet-ext.jar> and/or wrapper.conf <https://emu.freenetproject.org/svn/trunk/apps/installer/installclasspath/config/wrapper.conf> need to be updated.");
-			System.out.println("NOT using wrapper (at least not correctly).  Your freenet-ext.jar <http://downloads.freenetproject.org/alpha/freenet-ext.jar> and/or wrapper.conf <https://emu.freenetproject.org/svn/trunk/apps/installer/installclasspath/config/wrapper.conf> need to be updated.");
+			//Logger.error(this, "NOT using wrapper (at least not correctly).  Your freenet-ext.jar <http://downloads.freenetproject.org/alpha/freenet-ext.jar> and/or wrapper.conf <https://emu.freenetproject.org/svn/trunk/apps/installer/installclasspath/config/wrapper.conf> need to be updated.");
+			//System.out.println("NOT using wrapper (at least not correctly).  Your freenet-ext.jar <http://downloads.freenetproject.org/alpha/freenet-ext.jar> and/or wrapper.conf <https://emu.freenetproject.org/svn/trunk/apps/installer/installclasspath/config/wrapper.conf> need to be updated.");
 		}
 		Logger.normal(this, "Freenet 0.7.5 Build #"+Version.buildNumber()+" r"+Version.cvsRevision());
 		System.out.println("Freenet 0.7.5 Build #"+Version.buildNumber()+" r"+Version.cvsRevision());
@@ -4845,7 +4843,7 @@ public class Node implements TimeSkewDetectorCallback {
 	}
 
 	public void finishPanic() {
-		WrapperManager.restart();
+		//WrapperManager.restart();
 		System.exit(0);
 	}
 

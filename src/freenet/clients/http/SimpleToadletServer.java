@@ -15,8 +15,6 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.Random;
 
-import org.tanukisoftware.wrapper.WrapperManager;
-
 import freenet.client.filter.HTMLFilter;
 import freenet.client.filter.LinkFilterExceptionProvider;
 import freenet.clients.http.FProxyFetchInProgress.REFILTER_POLICY;
@@ -992,8 +990,8 @@ public final class SimpleToadletServer implements ToadletContainer, Runnable, Li
 				if(myThread == null) return;
 			}
 			Socket conn = networkInterface.accept();
-			if (WrapperManager.hasShutdownHookBeenTriggered())
-				return;
+			//if (WrapperManager.hasShutdownHookBeenTriggered())
+			//	return;
             if(conn == null)
                 continue; // timeout
             if(logMINOR)

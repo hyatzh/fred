@@ -29,8 +29,6 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-import org.tanukisoftware.wrapper.WrapperManager;
-
 import freenet.crypt.BlockCipher;
 import freenet.crypt.DSAPublicKey;
 import freenet.crypt.UnsupportedCipherException;
@@ -1105,7 +1103,7 @@ public class SaltedHashFreenetStore<T extends StorableBlock> implements FreenetS
 						random.nextBytes(seed);
 						mt = new MersenneTwister(seed);
 						if (starting) {
-							WrapperManager.signalStarting((int) MINUTES.toMillis(5));
+							//WrapperManager.signalStarting((int) MINUTES.toMillis(5));
 							if ( x++ % 32 == 0 )
 								System.err.println("Preallocating space for " + name + ": " + currentHdLen + "/" + newHdLen);
 						}
@@ -1427,7 +1425,7 @@ public class SaltedHashFreenetStore<T extends StorableBlock> implements FreenetS
 						configLock.writeLock().unlock();
 					}
 
-					WrapperManager.signalStarting((int) (RESIZE_MEMORY_ENTRIES * SECONDS.toMillis(30) + SECONDS.toMillis(1)));
+					//WrapperManager.signalStarting((int) (RESIZE_MEMORY_ENTRIES * SECONDS.toMillis(30) + SECONDS.toMillis(1)));
 				}
 
 				@Override
@@ -1469,7 +1467,7 @@ public class SaltedHashFreenetStore<T extends StorableBlock> implements FreenetS
 				int i = 0;
 				@Override
 				public boolean batch(long entriesLeft) {
-					WrapperManager.signalStarting((int) (RESIZE_MEMORY_ENTRIES * SECONDS.toMillis(30) + SECONDS.toMillis(1)));
+					//WrapperManager.signalStarting((int) (RESIZE_MEMORY_ENTRIES * SECONDS.toMillis(30) + SECONDS.toMillis(1)));
 
 					if (i++ % 16 == 0)
 						writeConfigFile();
@@ -1540,7 +1538,7 @@ public class SaltedHashFreenetStore<T extends StorableBlock> implements FreenetS
 						configLock.writeLock().unlock();
 					}
 
-					WrapperManager.signalStarting((int) (RESIZE_MEMORY_ENTRIES * SECONDS.toMillis(5) + SECONDS.toMillis(1)));
+					//WrapperManager.signalStarting((int) (RESIZE_MEMORY_ENTRIES * SECONDS.toMillis(5) + SECONDS.toMillis(1)));
 				}
 				
 				@Override
@@ -1567,7 +1565,7 @@ public class SaltedHashFreenetStore<T extends StorableBlock> implements FreenetS
 				int i = 0;
 				@Override
 				public boolean batch(long entriesLeft) {
-					WrapperManager.signalStarting((int) (RESIZE_MEMORY_ENTRIES * SECONDS.toMillis(5) + SECONDS.toMillis(1)));
+					//WrapperManager.signalStarting((int) (RESIZE_MEMORY_ENTRIES * SECONDS.toMillis(5) + SECONDS.toMillis(1)));
 
 					if (i++ % 16 == 0)
 						writeConfigFile();

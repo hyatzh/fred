@@ -9,8 +9,6 @@ import java.net.URI;
 import java.util.HashSet;
 import java.util.List;
 
-import org.tanukisoftware.wrapper.WrapperManager;
-
 import freenet.client.ClientMetadata;
 import freenet.client.HighLevelSimpleClient;
 import freenet.client.InsertBlock;
@@ -142,10 +140,10 @@ public class WelcomeToadlet extends Toadlet {
             HTMLNode pageNode = page.outer;
             HTMLNode contentNode = page.content;
             if (node.isUsingWrapper()) {
-            	ctx.getPageMaker().getInfobox("#", l10n("threadDumpSubTitle"), contentNode, "thread-dump-generation", true).
-            		addChild("#", l10n("threadDumpWithFilename", "filename", WrapperManager.getProperties().getProperty("wrapper.logfile")));
+                ctx.getPageMaker().getInfobox("#", l10n("threadDumpSubTitle"), contentNode, "thread-dump-generation", true).
+                    addChild("#", l10n("threadDumpWithFilename", "filename", "FIXME" /*WrapperManager.getProperties().getProperty("wrapper.logfile")*/));
                 System.out.println("Thread Dump:");
-                WrapperManager.requestThreadDump();
+                //WrapperManager.requestThreadDump();
             } else {
             	ctx.getPageMaker().getInfobox("infobox-error", l10n("threadDumpSubTitle"), contentNode, "thread-dump-generation", true).
             		addChild("#", l10n("threadDumpNotUsingWrapper"));

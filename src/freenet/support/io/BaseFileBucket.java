@@ -14,8 +14,6 @@ import java.io.OutputStream;
 import java.util.Arrays;
 import java.util.Vector;
 
-import org.tanukisoftware.wrapper.WrapperManager;
-
 import freenet.client.async.ClientContext;
 import freenet.support.LogThresholdCallback;
 import freenet.support.Logger;
@@ -77,11 +75,12 @@ public abstract class BaseFileBucket implements RandomAccessBucket {
 		try {
 			file.deleteOnExit();
 		} catch (NullPointerException e) {
-			if(WrapperManager.hasShutdownHookBeenTriggered()) {
+			/*if(WrapperManager.hasShutdownHookBeenTriggered()) {
 				Logger.normal(this, "NullPointerException setting deleteOnExit while shutting down - buggy JVM code: "+e, e);
 			} else {
 				Logger.error(this, "Caught "+e+" doing deleteOnExit() for "+file+" - JVM bug ????");
-			}
+			}*/
+		    Logger.error(this, "Caught "+e+" doing deleteOnExit() for "+file+" - JVM bug ????");
 		}
 	}
 

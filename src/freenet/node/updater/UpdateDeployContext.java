@@ -13,8 +13,6 @@ import java.util.ArrayList;
 import java.util.Properties;
 import java.util.regex.Pattern;
 
-import org.tanukisoftware.wrapper.WrapperManager;
-
 import freenet.l10n.NodeL10n;
 import freenet.node.NodeInitException;
 import freenet.node.updater.MainJarDependenciesChecker.Dependency;
@@ -49,7 +47,7 @@ public class UpdateDeployContext {
 	final MainJarDependencies deps;
 	
 	UpdateDeployContext(MainJarDependencies deps) throws UpdaterParserException {
-		Properties p = WrapperManager.getProperties();
+		Properties p = null;// WrapperManager.getProperties();
 		this.deps = deps;
 		
 		for(int propNo=1;true;propNo++) {

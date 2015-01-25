@@ -4,8 +4,6 @@ import static java.util.concurrent.TimeUnit.MINUTES;
 
 import java.util.Arrays;
 
-import org.tanukisoftware.wrapper.WrapperManager;
-
 import freenet.client.async.ClientContext;
 import freenet.client.async.ClientRequestSelector;
 import freenet.client.async.RequestSelectionTreeNode;
@@ -455,7 +453,7 @@ public class RandomGrabArray implements RemoveRandom, RequestSelectionTreeNode {
 	// At present it is only called on startup so this is okay.
 	public void moveElementsTo(RandomGrabArray existingGrabber,
 			boolean canCommit) {
-		WrapperManager.signalStarting((int) MINUTES.toMillis(5));
+		//WrapperManager.signalStarting((int) MINUTES.toMillis(5));
 		for(Block block: blocks) {
 			for(int j=0;j<block.reqs.length;j++) {
 				RandomGrabArrayItem item = block.reqs[j];

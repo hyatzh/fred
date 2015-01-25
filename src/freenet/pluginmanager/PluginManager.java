@@ -32,8 +32,6 @@ import java.util.jar.JarFile;
 import java.util.jar.Manifest;
 import java.util.zip.ZipException;
 
-import org.tanukisoftware.wrapper.WrapperManager;
-
 import freenet.client.HighLevelSimpleClient;
 import freenet.clients.fcp.ClientPut;
 import freenet.clients.http.QueueToadlet;
@@ -1196,7 +1194,7 @@ public class PluginManager {
 				try {
 					downloaded = true;
 					System.err.println("Downloading plugin "+name);
-					WrapperManager.signalStarting((int) MINUTES.toMillis(5));
+					//WrapperManager.signalStarting((int) MINUTES.toMillis(5));
 					File tempPluginFile = null;
 					OutputStream pluginOutputStream = null;
 					InputStream pluginInputStream = null;

@@ -13,8 +13,6 @@ import java.util.WeakHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import org.tanukisoftware.wrapper.WrapperManager;
-
 import freenet.client.ClientMetadata;
 import freenet.client.DefaultMIMETypes;
 import freenet.client.FetchContext;
@@ -152,8 +150,8 @@ public class FCPServer implements Runnable, DownloadCache {
 			} catch (Throwable t) {
 				Logger.error(this, "Caught "+t, t);
 			}
-			if (WrapperManager.hasShutdownHookBeenTriggered())
-				return;
+			//if (WrapperManager.hasShutdownHookBeenTriggered())
+			//	return;
 			try{
 				Thread.sleep(2000);
 			}catch (InterruptedException e) {}

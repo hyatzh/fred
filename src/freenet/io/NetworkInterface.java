@@ -35,8 +35,6 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
-import org.tanukisoftware.wrapper.WrapperManager;
-
 import freenet.io.AddressIdentifier.AddressType;
 import freenet.support.Executor;
 import freenet.support.LogThresholdCallback;
@@ -156,7 +154,8 @@ public class NetworkInterface implements Closeable {
 		try {
 			while(runningAcceptors > 0) {
 				acceptorClosedCondition.awaitUninterruptibly();
-				if(shutdown || WrapperManager.hasShutdownHookBeenTriggered()) return null;
+				//if(shutdown || WrapperManager.hasShutdownHookBeenTriggered()) return null;
+				if(shutdown) return null;
 			}
 		} finally {
 			lock.unlock();
@@ -241,8 +240,8 @@ public class NetworkInterface implements Closeable {
 			while ((socket = acceptedSockets.poll()) == null ) {
 				if (shutdown)
 					return null;
-				if (WrapperManager.hasShutdownHookBeenTriggered())
-					return null;
+				//if (WrapperManager.hasShutdownHookBeenTriggered())
+				//	return null;
 				if (acceptors.size() == 0) {
 					return null;
 				}
@@ -448,8 +447,8 @@ public class NetworkInterface implements Closeable {
 				}
 				if (shutdown)
 					return;
-				if (WrapperManager.hasShutdownHookBeenTriggered())
-					return;
+				//if (WrapperManager.hasShutdownHookBeenTriggered())
+				//	return;
 			}
 		} finally {
 			lock.unlock();
