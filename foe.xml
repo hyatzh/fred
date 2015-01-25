@@ -57,7 +57,7 @@ This file is to build Freenet as OSGi bundle for the 'Freenet OSGi Experiment' (
 			<zipfileset src="../foe/orbit/lib/wrapper.jar">
 				<!-- exclude name="org/tanukisoftware/**"/ -->
 			</zipfileset>
-			<zipfileset src="lib/bcprov.jar">
+			<zipfileset src="../foe/orbit/lib/bcprov.jar">
 				<!-- exclude name="org/tanukisoftware/**"/ -->
 			</zipfileset>
 
