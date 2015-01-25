@@ -125,7 +125,7 @@ public class StaticToadlet extends Toadlet {
 			File f = new File(url.getPath());
 			return new Date(f.lastModified());
 		} else {
-			return null;
+			return new Date(0);
 		}
 	}
 	
