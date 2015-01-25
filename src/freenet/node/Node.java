@@ -3256,13 +3256,13 @@ public class Node implements TimeSkewDetectorCallback {
 		lm.start();
 
 		// Node Updater
-		try{
-			Logger.normal(this, "Starting the node updater");
-			nodeUpdater.start();
-		}catch (Exception e) {
-			e.printStackTrace();
-			throw new NodeInitException(NodeInitException.EXIT_COULD_NOT_START_UPDATER, "Could not start Updater: "+e);
-		}
+//		try{
+//			Logger.normal(this, "Starting the node updater");
+//			nodeUpdater.start();
+//		}catch (Exception e) {
+//			e.printStackTrace();
+//			throw new NodeInitException(NodeInitException.EXIT_COULD_NOT_START_UPDATER, "Could not start Updater: "+e);
+//		}
 
 		/* TODO: Make sure that this is called BEFORE any instances of HTTPFilter are created.
 		 * HTTPFilter uses checkForGCJCharConversionBug() which returns the value of the static
