@@ -37,6 +37,13 @@ This file is to build Freenet as OSGi bundle for the 'Freenet OSGi Experiment' (
 						org.apache.commons.compress.archivers,
 						org.apache.commons.compress.archivers.tar,
 						org.apache.commons.compress.compressors.bzip2,
+						org.bouncycastle.crypto,
+						org.bouncycastle.crypto.engines,
+						org.bouncycastle.crypto.io,
+						org.bouncycastle.crypto.modes,
+						org.bouncycastle.crypto.params,
+						org.bouncycastle.jce.provider,
+						org.bouncycastle.util,
 						org.osgi.service.log,
 						SevenZip.Compression,
 						SevenZip.Compression.LZMA"/>
@@ -54,10 +61,6 @@ This file is to build Freenet as OSGi bundle for the 'Freenet OSGi Experiment' (
 			<zipfileset src="../foe/orbit/lib/freenet-ext.jar">
 				<!-- exclude name="org/tanukisoftware/**"/ -->
 			</zipfileset>
-			<zipfileset src="../foe/orbit/lib/bcprov.jar">
-				<!-- exclude name="org/tanukisoftware/**"/ -->
-			</zipfileset>
-
 		</jar>
 	</target>
 
