@@ -51,10 +51,12 @@ import freenet.support.io.ResumeFailedException;
  * <DT>container mode: <DD>the metadata are inside the root container (the final URI points to an archive)
  * <DT>freeform mode: <DD>the metadata are inserted separately.(the final URI points to a SimpleManifest)
  * </DL>
- * @see {@link PlainManifestPutter} and {@link DefaultManifestPutter}</P>
  * 
  * WARNING: Changing non-transient members on classes that are Serializable can result in 
  * restarting downloads or losing uploads.
+ * </P>
+ * @see freenet.client.async.PlainManifestPutter PlainManifestPutter, freenet.client.async.DefaultManifestPutter DefaultManifestPutter
+ * 
  */
 public abstract class BaseManifestPutter extends ManifestPutter {
 
@@ -1179,7 +1181,16 @@ public abstract class BaseManifestPutter extends ManifestPutter {
 	public void innerNotifyClients(ClientContext context) {
 	    SplitfileProgressEvent e;
 	    synchronized(this) {
-	        e = new SplitfileProgressEvent(this.totalBlocks, this.successfulBlocks, this.failedBlocks, this.fatallyFailedBlocks, this.minSuccessBlocks, minSuccessFetchBlocks, this.blockSetFinalized);
+	        e = new SplitfileProgressEvent(
+	            this.totalBlocks,
+	            this.successfulBlocks,
+	            this.latestSuccess,
+	            this.failedBlocks,
+	            this.fatallyFailedBlocks,
+	            this.latestFailure,
+	            this.minSuccessBlocks,
+	            this.minSuccessFetchBlocks,
+	            this.blockSetFinalized);
 	    }
 		ctx.eventProducer.produceEvent(e, context);
 	}
@@ -1469,7 +1480,7 @@ public abstract class BaseManifestPutter extends ManifestPutter {
 
 		public ContainerBuilder makeSubContainer(String name) {
 			ContainerBuilder subCon = new ContainerBuilder(selfHandle, name);
-			currentDir.put(name , subCon.selfHandle);
+			currentDir.put(name, subCon.selfHandle);
 			putHandlersTransformMap.put(subCon.selfHandle, currentDir);
 			perContainerPutHandlersWaitingForMetadata.get(selfHandle).add(subCon.selfHandle);
 			return subCon;
@@ -1556,7 +1567,7 @@ public abstract class BaseManifestPutter extends ManifestPutter {
                 manifestEntries.put(name, o);
             } else if(o instanceof Bucket) {
                 RandomAccessBucket data = (RandomAccessBucket) o;
-                manifestEntries.put(name, new ManifestElement(name, data, null,data.size()));
+                manifestEntries.put(name, new ManifestElement(name, data, null, data.size()));
             } else if(o instanceof HashMap) {
                 manifestEntries.put(name, bucketsByNameToManifestEntries(Metadata.forceMap(o)));
             } else

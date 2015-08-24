@@ -431,7 +431,7 @@ public class NodeClientCore implements Persistable {
                     }
 		    
 		}, true);
-		memoryLimitedJobRunner = new MemoryLimitedJobRunner(nodeConfig.getLong("memoryLimitedJobMemoryLimit"), nodeConfig.getInt("memoryLimitedJobThreadLimit"), node.executor);
+		memoryLimitedJobRunner = new MemoryLimitedJobRunner(nodeConfig.getLong("memoryLimitedJobMemoryLimit"), nodeConfig.getInt("memoryLimitedJobThreadLimit"), node.executor, RequestStarter.NUMBER_OF_PRIORITY_CLASSES);
 		shutdownHook.addEarlyJob(new NativeThread("Shutdown FEC", NativeThread.HIGH_PRIORITY, true) {
 		    
 		    public void realRun() {
@@ -996,8 +996,6 @@ public class NodeClientCore implements Persistable {
 	 * from the datastore - is this a problem?
 	 * @param canReadClientCache Can this request read the client-cache?
 	 * @param canWriteClientCache Can this request write the client-cache?
-	 * @param htl The HTL to start the request at. See the caller, this can be modified in the case of 
-	 * fetching an offered key.
 	 * @param realTimeFlag Is this a real-time request? False = this is a bulk request.
 	 * @param localOnly If true, only check the datastore, don't create a request if nothing is found.
 	 * @param ignoreStore If true, don't check the datastore, create a request immediately.

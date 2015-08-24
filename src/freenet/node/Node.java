@@ -66,6 +66,7 @@ import freenet.crypt.DSAPublicKey;
 import freenet.crypt.DiffieHellman;
 import freenet.crypt.ECDH;
 import freenet.crypt.MasterSecret;
+import freenet.crypt.PersistentRandomSource;
 import freenet.crypt.RandomSource;
 import freenet.crypt.Yarrow;
 import freenet.io.comm.DMT;
@@ -4110,9 +4111,9 @@ public class Node implements TimeSkewDetectorCallback {
 
 		config.store();
 
-		// TODO: find a smarter way of doing it not involving any casting
-		Yarrow myRandom = (Yarrow) random;
-		myRandom.write_seed(myRandom.seedfile, true);
+        if(random instanceof PersistentRandomSource) {
+            ((PersistentRandomSource) random).write_seed(true);
+        }
 	}
 
 	public NodeUpdateManager getNodeUpdater(){
@@ -4683,26 +4684,8 @@ public class Node implements TimeSkewDetectorCallback {
 
 	private SimpleUserAlert alertMTUTooSmall;
 
-	public final RequestClient nonPersistentClientBulk = new RequestClient() {
-		@Override
-		public boolean persistent() {
-			return false;
-		}
-		@Override
-		public boolean realTimeFlag() {
-			return false;
-		}
-	};
-	public final RequestClient nonPersistentClientRT = new RequestClient() {
-		@Override
-		public boolean persistent() {
-			return false;
-		}
-		@Override
-		public boolean realTimeFlag() {
-			return true;
-		}
-	};
+	public final RequestClient nonPersistentClientBulk = new RequestClientBuilder().build();
+	public final RequestClient nonPersistentClientRT = new RequestClientBuilder().realTime().build();
 
 	public void setDispatcherHook(NodeDispatcherCallback cb) {
 		this.dispatcher.setHook(cb);

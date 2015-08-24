@@ -89,14 +89,19 @@ public class ContainerInserter implements ClientPutState, Serializable {
 	/**
 	 * Insert a bunch of files as single Archive with .metadata
 	 * 
-	 * @param metadata2 
-	 * @param archiveType2 
+	 * @param parent2
+	 * @param cb2
+	 * @param metadata2
 	 * @param targetURI2 The caller need to clone it for persistance
-	 * @param token2 
-	 * @param getCHKOnly2 
-	 * @param earlyEncode2 
-	 * @param ctx2 
-	 * @param reportMetadataOnly2 
+	 * @param ctx2
+	 * @param dontCompress2
+	 * @param reportMetadataOnly2
+	 * @param token2
+	 * @param archiveType2
+	 * @param freeData
+	 * @param forceCryptoKey
+	 * @param cryptoAlgorithm
+	 * @param realTimeFlag
 	 * 
 	 */
 	public ContainerInserter(
@@ -340,7 +345,7 @@ public class ContainerInserter implements ClientPutState, Serializable {
 				smc.addItem(name, (Metadata)o);
 			} else {
 				ManifestElement element = (ManifestElement) o;
-				String mimeType = element.mimeOverride;
+				String mimeType = element.getMimeType();
 				ClientMetadata cm;
 				if(mimeType == null || mimeType.equals(DefaultMIMETypes.DEFAULT_MIME_TYPE))
 					cm = null;
@@ -382,7 +387,7 @@ public class ContainerInserter implements ClientPutState, Serializable {
     }
     
     @SuppressWarnings("unchecked")
-    private void resumeMetadata(Map<String, Object> map, ClientContext context) throws ResumeFailedException {
+    public static void resumeMetadata(Map<String, Object> map, ClientContext context) throws ResumeFailedException {
         Map<String, Object> manifestElements = (Map<String, Object>)map;
         for (Object o : manifestElements.values()) {
             if(o instanceof HashMap) {

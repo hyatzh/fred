@@ -28,6 +28,7 @@ import freenet.node.KeysFetchingLocally;
 import freenet.support.Logger;
 import freenet.support.MemoryLimitedChunk;
 import freenet.support.MemoryLimitedJob;
+import freenet.support.MemoryLimitedJobRunner;
 import freenet.support.api.LockableRandomAccessBuffer.RAFLock;
 import freenet.support.io.NativeThread;
 import freenet.support.io.StorageFormatException;
@@ -169,13 +170,17 @@ public class SplitFileFetcherSegmentStorage {
     /** Construct from a saved file. Uses the DataInputStream to read static settings, i.e. number 
      * of blocks, does not use the RAF to read block status etc; caller must call readMetadata and
      * readKeys separately for that.
-     * @param splitFileFetcherStorage
-     * @param raf
+     * @param parent
      * @param dis DataInputStream to which the static settings have been saved. Anything else we 
      * will need to read separately from the RandomAccessBuffer.
      * @param segNo The segment number.
+     * @param writeRetries
+     * @param segmentDataOffset
      * @param segmentCrossCheckDataOffset -1 to mean store the cross-check blocks just after the 
      * data and check blocks for this segment. Otherwise the offset.
+     * @param segmentKeysOffset
+     * @param segmentStatusOffset
+     * @param keysFetching
      * @throws IOException 
      * @throws StorageFormatException 
      */
@@ -282,7 +287,7 @@ public class SplitFileFetcherSegmentStorage {
         long limit = totalBlocks() * CHKBlock.DATA_LENGTH + 
             Math.max(parent.fecCodec.maxMemoryOverheadDecode(blocksForDecode(), checkBlocks),
                     parent.fecCodec.maxMemoryOverheadEncode(blocksForDecode(), checkBlocks));
-        final int prio = NativeThread.LOW_PRIORITY;
+        final int prio = parent.getPriorityClass();
         parent.memoryLimitedJobRunner.queueJob(new MemoryLimitedJob(limit) {
             
             @Override
@@ -320,7 +325,7 @@ public class SplitFileFetcherSegmentStorage {
                         if(!shutdown)
                             parent.finishedEncoding(SplitFileFetcherSegmentStorage.this);
                     } finally {
-                        if(lock != null) lock.unlock(false, prio);
+                        if(lock != null) lock.unlock(false, MemoryLimitedJobRunner.THREAD_PRIORITY);
                     }
                 }
                 return true;
